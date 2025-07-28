@@ -2,7 +2,8 @@
 
 ## 1. 脚本概述
 
-这是开源之夏项目：为IvorySQL增加一键式安装脚本（https://summer-ospp.ac.cn/org/prodetail/258430417?lang=zh&list=pro），适用于多种主流Linux发行版。
+这是开源之夏项目：为IvorySQL增加一键式安装脚本（https://summer-ospp.ac.cn/org/prodetail/258430417?lang=zh&list=pro）。
+适用于多种主流Linux发行版。
 
 ### 核心实现功能：
 - ✅ **环境检测**：检查操作系统类型和版本
