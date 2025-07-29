@@ -36,7 +36,7 @@ git clone https://github.com/yangchunwanwusheng/AutoInstall.sh.git
 cd AutoInstall.sh
 
 # 添加执行权限
-chmod +x install_ivorysql.sh
+chmod +x AutoInstall.sh
 ```
 
 ## 3. 配置文件说明
@@ -56,7 +56,7 @@ LOG_DIR="/var/log/ivorysql"
 ### 配置技巧：
 1. 首次运行脚本创建配置文件：
 ```bash
-sudo ./install_ivorysql.sh
+sudo ./AutoInstall.sh
 ```
 2. 当看到提示 **"发现现有配置文件"** 时，**立即按 Ctrl+C** 停止脚本
 3. 编辑配置文件进行自定义：
@@ -69,7 +69,7 @@ sudo nano /etc/ivorysql/install.conf
 
 ### 基本安装命令：
 ```bash
-sudo ./install_ivorysql.sh
+sudo ./AUtoInstall.sh
 ```
 
 ### 详细安装流程：
