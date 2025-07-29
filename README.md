@@ -1,4 +1,4 @@
-# IvorySQL 自动化安装脚本使用文档
+# IvorySQL-AutoInstaller使用文档
 
 ## 1. 脚本概述
 
