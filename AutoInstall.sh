@@ -63,10 +63,6 @@ validate_config() {
                 STEP_FAIL "配置错误: $key 包含无效字符 (当前值: $value)"
             fi
             
-            # 冲突检查
-            if [[ "$SERVICE_USER" == "$SERVICE_GROUP" ]]; then
-                STEP_WARNING "警告: 服务用户和组同名 ($value)"
-            fi
             ;;
             
         REPO_URL)
