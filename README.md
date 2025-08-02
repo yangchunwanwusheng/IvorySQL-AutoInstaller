@@ -2,9 +2,9 @@
 # IvorySQL-AutoInstaller使用文档
 
 ## 脚本概述
-开源之夏项目 “为IvorySQL增加一键式安装脚本” （https://summer-ospp.ac.cn/org/prodetail/258430417?lang=zh&list=pro%EF%BC%89%E3%80%82）;
-`IvorySQL-AutoInstaller` 是一个自动化源码编译安装 IvorySQL 数据库的 Bash 脚本，支持主流 Linux 发行版。该脚本实现了从源码获取、编译安装到系统服务集成的全流程自动化，特别适合在需要特定编译参数或定制版本的场景下使用。
+开源之夏项目 “为IvorySQL增加一键式安装脚本” （https://summer-ospp.ac.cn/org/prodetail/258430417?lang=zh&list=pro%EF%BC%89%E3%80%82）
 
+`IvorySQL-AutoInstaller` 是一个自动化源码编译安装 IvorySQL 数据库的 Bash 脚本，支持主流 Linux 发行版。
 ## 核心功能说明
 
 ### 1. 配置管理
