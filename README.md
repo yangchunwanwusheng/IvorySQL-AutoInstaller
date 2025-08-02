@@ -76,7 +76,7 @@
   ```
 
 > **注意**：CentOS/RHEL 7 需手动通过官方源安装，不支持本脚本。
-```
+
 
 **自动安装的依赖**：
 - 编译工具链：GCC, Make, Flex, Bison
@@ -97,7 +97,7 @@
    --without-icu             # 当检测不到 /usr/include/icu.h 时禁用
    --without-libxml           # 当检测不到 /usr/include/libxml2/libxml/parser.h 时禁用
    --without-tcl              # 当检测不到 /usr/include/tcl.h 时禁用
-   ```
+   
 4. 并行编译优化：使用 `make -j$(nproc)` 基于 CPU 核心数并行编译
 5. 版本标识保留：记录安装版本的 Git Commit ID
 
