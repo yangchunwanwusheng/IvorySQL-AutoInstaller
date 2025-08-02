@@ -7,25 +7,76 @@
 `IvorySQL-AutoInstaller` 是一个自动化源码编译安装 IvorySQL 数据库的 Bash 脚本，支持主流 Linux 发行版。
 ## 核心功能说明
 
-### 1. 配置管理
-- **配置文件路径**：`/etc/ivorysql/install.conf`
-- **关键配置项**：
+### 1.配置管理  
+- **配置文件路径**：`/etc/ivorysql/install.conf`  
+- **关键配置项**：  
   ```ini
-  INSTALL_DIR      = "/opt/ivorysql"       # 安装目录（必需）
-  DATA_DIR         = "/data/ivorysql"      # 数据目录（必需）
-  SERVICE_USER     = "ivoryuser"           # 服务运行用户（必需）
-  SERVICE_GROUP    = "ivorygroup"          # 服务运行组（必需）
-  REPO_URL         = "https://github.com/xxx/IvorySQL.git"  # 源码仓库（必需）
-  TAG              = "v2.1.0"              # 优先使用的版本标签（与分支二选一）
-  BRANCH           = "main"                # 源码分支
-  LOG_DIR          = "/var/log/ivorysql"   # 日志目录（默认值）
+  INSTALL_DIR = /usr/local/ivorysql/ivorysql-4  # 安装目录（必需）
+  DATA_DIR = /var/lib/ivorysql/data             # 数据目录（必需）
+  SERVICE_USER = ivorysql                        # 服务运行用户（必需）
+  SERVICE_GROUP = ivorysql                       # 服务运行组（必需）
+  REPO_URL = https://github.com/IvorySQL/IvorySQL.git  # 源码仓库（必需）
+  LOG_DIR = /var/log/ivorysql                    # 日志目录（默认值）
+  TAG = IvorySQL_4.5.3                           # 优先使用的版本标签（与分支二选一）
+  #BRANCH = IVORYSQL_REL_4_STABLE                 # 源码分支
   ```
 
-### 2. 依赖管理
-支持的 Linux 发行版：
-- RHEL/CentOS/Rocky/AlmaLinux (8/9)
-- Ubuntu/Debian (18.04-24.04)
-- openSUSE/SLES (15+)
+ **配置文件注意事项**  
+  **配置格式要求**  
+  - 禁止使用引号：配置值不得使用引号 
+
+  **路径必须是绝对路径**  
+  以下配置项必须使用绝对路径（以`/`开头）：  
+  `INSTALL_DIR`, `DATA_DIR`, `LOG_DIR`  
+
+  **路径权限要求**  
+  - 脚本会自动创建不存在的目录  
+  - 父目录必须可写   
+
+  **用户/组配置规范**  
+  ```ini
+  SERVICE_USER = ivorysql
+  SERVICE_GROUP = ivorysql
+  ```
+  - 符合Linux用户命名规则  
+  - 禁止使用保留名称（如root/administrator）  
+
+  **版本控制规则**  
+  ```ini
+  TAG = IvorySQL_4.5.3
+  BRANCH = IVORYSQL_REL_4_STABLE
+  ```
+  - 必须设置`TAG`或`BRANCH`至少一个  
+  - 同时设置时优先使用`TAG`  
+  - 标签/分支名称需符合Git规范  
+
+  **仓库URL要求**  
+  ```ini
+  REPO_URL = https://github.com/IvorySQL/IvorySQL.git
+  ```
+  - 必须是有效的Git仓库URL  
+  - 非官方仓库会产生警告  
+
+---
+
+### 2.依赖管理  
+**支持的 Linux 发行版**：  
+- RHEL/CentOS/Rocky/AlmaLinux (8/9)  
+- Ubuntu/Debian (18.04-24.04)  
+- openSUSE/SLES (15+)  
+
+**自动安装的依赖**：  
+- 编译工具链：`GCC`, `Make`, `Flex`, `Bison`  
+- 核心库：`readline`, `zlib`, `openssl`  
+- 可选库支持：  
+  ```ini
+  ICU          # 检测路径：/usr/include/icu.h  
+  libxml2      # 检测路径：/usr/include/libxml2/libxml/parser.h  
+  TCL          # 检测路径：/usr/include/tcl.h  
+  ```
+
+> **注意**：CentOS/RHEL 7 需手动通过官方源安装，不支持本脚本。
+```
 
 **自动安装的依赖**：
 - 编译工具链：GCC, Make, Flex, Bison
@@ -100,9 +151,9 @@ chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${LOG_DIR}"
 1. 创建配置文件：
    ```bash
    sudo mkdir -p /etc/ivorysql
-   sudo vim /etc/ivorysql/install.conf
+   sudo nano /etc/ivorysql/install.conf
    ```
-2. 填写必要配置（至少包含 INSTALL_DIR, DATA_DIR, SERVICE_USER, SERVICE_GROUP, REPO_URL）
+2. 按照规范填写配置文件
 3. 保存后脚本会自动设置安全权限：
    ```bash
    chmod 600 /etc/ivorysql/install.conf
