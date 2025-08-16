@@ -139,21 +139,21 @@ end
 
 ```ini
 
-INSTALL_DIR = /usr/local/ivorysql/ivorysql-4        # 安装目录（必需）
+INSTALL_DIR=/usr/local/ivorysql/ivorysql-4        # 安装目录（必需）
 
-DATA_DIR = /var/lib/ivorysql/data                   # 数据目录（必需）
+DATA_DIR=/var/lib/ivorysql/data                   # 数据目录（必需）
 
-SERVICE_USER = ivorysql                             # 服务运行用户（必需）
+SERVICE_USER=ivorysql                             # 服务运行用户（必需）
 
-SERVICE_GROUP = ivorysql                            # 服务运行组（必需）
+SERVICE_GROUP=ivorysql                            # 服务运行组（必需）
 
-REPO_URL = https://github.com/IvorySQL/IvorySQL.git # 源码仓库（必需）
+REPO_URL=https://github.com/IvorySQL/IvorySQL.git # 源码仓库（必需）
 
-LOG_DIR = /var/log/ivorysql                         # 日志目录（默认值）
+LOG_DIR=/var/log/ivorysql                         # 日志目录（默认值）
 
-TAG = IvorySQL_4.5.3                                # 优先使用的版本标签（与分支二选一）
+TAG=IvorySQL_4.5.3                                # 优先使用的版本标签（与分支二选一）
 
-#BRANCH = IVORYSQL_REL_4_STABLE                     # 源码分支
+#BRANCH=IVORYSQL_REL_4_STABLE                     # 源码分支
 
 ```
 > **注意：** 
