@@ -398,7 +398,7 @@ setup_user() {
 }
 
 # -------------------------- 源码编译 --------------------------
-# 根据官方文档更新源码编译配置部分
+# 从源码编译安装IvorySQL
 compile_install() {
     CURRENT_STAGE "源码编译安装"
     
@@ -449,29 +449,24 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项 - 根据官方文档更新
+    # 配置编译选项（修复SSL问题）
     STEP_BEGIN "配置编译参数"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
-    # 根据官方文档使用--prefix指定安装路径
-    if [[ -z "$INSTALL_DIR" ]]; then
-        STEP_WARNING "未指定安装路径，使用默认路径 /usr/local/pgsql"
-        INSTALL_DIR="/usr/local/pgsql"
-    fi
-    
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR"
-    
-    # 根据官方文档显示配置过程
-    echo "运行配置命令: ./configure $CONFIGURE_OPTS"
-    ./configure $CONFIGURE_OPTS || {
-        echo "============= 配置错误详情 ============="
-        tail -n 50 config.log
-        STEP_FAIL "配置失败"
-    }
-    STEP_SUCCESS "配置完成 - 安装路径: $INSTALL_DIR"
+    # 正确检测依赖库
+    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
+    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
+        CONFIGURE_OPTS+=" --without-libxml"
+    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
+   
+    echo "使用配置选项: $CONFIGURE_OPTS"
+    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    STEP_SUCCESS "配置完成"
 
     # 编译过程
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
     make -j$(nproc) || {
+        # 输出详细的错误信息
         echo "============= 编译错误详情 ============="
         tail -n 50 config.log
         STEP_FAIL "编译失败"
@@ -483,10 +478,6 @@ compile_install() {
     make install || STEP_FAIL "安装失败"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
     STEP_SUCCESS "成功安装到: $INSTALL_DIR"
-    
-    # 注意根据官方文档提示后续步骤
-    STEP_WARNING "注意: 如果你通过--prefix指定了自定义安装目录"
-    STEP_WARNING "后续文档中的默认路径(/usr/local/pgsql)需替换为你的自定义路径"
 }
 
 # -------------------------- 后期配置 --------------------------
