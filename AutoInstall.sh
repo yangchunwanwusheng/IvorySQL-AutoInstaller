@@ -173,8 +173,7 @@ load_config() {
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
     fi
     
-    # 设置默认日志目录
-    LOG_DIR=${LOG_DIR:-"/var/log/ivorysql"}
+    
     
     # 配置内容有效性验证
     STEP_BEGIN "检查配置内容有效性"
@@ -186,8 +185,7 @@ load_config() {
     STEP_SUCCESS "配置内容有效性验证通过"
     
   
-    DB_SUPERUSER=${DB_SUPERUSER:-"ivorysql_admin"}
-    STEP_WARNING "数据库超级用户设置为: $DB_SUPERUSER (系统用户: $SERVICE_USER)"
+ 
 }
 
 # -------------------------- 日志管理 --------------------------
@@ -314,7 +312,9 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
+   
     local OFFICIAL_BASE_DEPS="bison readline-devel zlib-devel openssl-devel"
+    # 开发工具（必需）
     local DEV_TOOLS="gcc make flex bison"
 
     declare -A OS_SPECIFIC_DEPS=(
@@ -325,7 +325,6 @@ install_dependencies() {
         [suse_base]="bison-devel readline-devel zlib-devel libopenssl-devel flex"
     )
 
-    # 操作系统特定依赖安装
     case $ID in
         centos|rhel|almalinux|rocky)
             STEP_BEGIN "安装RHEL依赖"
@@ -334,17 +333,10 @@ install_dependencies() {
             
             $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
                 
-            
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || {
-                    STEP_WARNING "开发工具组安装失败，尝试安装核心组件"
-                    $PKG_MANAGER install -y autoconf automake binutils gcc gcc-c++ make
-                }
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
             else
-                $PKG_MANAGER groupinstall -y "Development Tools" || {
-                    STEP_WARNING "开发工具组安装失败，尝试安装核心组件"
-                    $PKG_MANAGER install -y autoconf automake binutils gcc gcc-c++ make
-                }
+                $PKG_MANAGER groupinstall -y "Development Tools" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
             fi
             
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || STEP_WARNING "flex安装失败（继续执行）"
@@ -375,7 +367,6 @@ install_dependencies() {
             ;;
     esac
     
-    # 编译工具验证
     STEP_BEGIN "验证编译工具"
     for cmd in gcc make flex bison; do
         if ! command -v $cmd >/dev/null 2>&1; then
@@ -484,15 +475,13 @@ compile_install() {
 }
 
 # -------------------------- 后期配置 --------------------------
-# 安装后配置和初始化
 post_install() {
     CURRENT_STAGE "安装后配置"
     
     STEP_BEGIN "准备数据目录"
     mkdir -p "$DATA_DIR" || STEP_FAIL "无法创建数据目录 $DATA_DIR"
     
-    # 数据目录清理（如果非空）
-    if find "$DATA_DIR" -mindepth 1 -print -quit | grep -q .; then
+    if [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
         STEP_BEGIN "清空非空数据目录"
         systemctl stop ivorysql 2>/dev/null || true
         rm -rf "${DATA_DIR:?}"/* "${DATA_DIR:?}"/.[^.]* "${DATA_DIR:?}"/..?* 2>/dev/null || true
@@ -505,18 +494,8 @@ post_install() {
     chmod 750 "$DATA_DIR"
     STEP_SUCCESS "数据目录权限设置完成"
 
-    # 环境变量配置
     STEP_BEGIN "配置环境变量"
     user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
-    
-   
-    if [[ -z "$user_home" || "$user_home" == "/" || ! -d "$user_home" ]]; then
-        user_home="/home/$SERVICE_USER"
-        mkdir -p "$user_home"
-        chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home"
-        STEP_SUCCESS "创建用户家目录: $user_home"
-    fi
-    
     cat > "$user_home/.bash_profile" <<EOF
 # --- IvorySQL Environment Configuration ---
 PATH="$INSTALL_DIR/bin:\$PATH"
@@ -531,16 +510,14 @@ EOF
     su - "$SERVICE_USER" -c "source ~/.bash_profile" || STEP_WARNING "环境变量立即生效失败（继续执行）"
     STEP_SUCCESS "环境变量已设置"
 
-   
     STEP_BEGIN "初始化数据库"
-    INIT_CMD="initdb -D $DATA_DIR -U $DB_SUPERUSER --no-locale"
+    INIT_CMD="initdb -D $DATA_DIR --no-locale"
     if ! su - "$SERVICE_USER" -c "source ~/.bash_profile && $INIT_CMD"; then
         STEP_FAIL "数据库初始化失败"
         echo "手动调试命令: sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
         exit 1
     fi
     STEP_SUCCESS "数据库初始化完成"
-    
     
     STEP_BEGIN "配置系统服务"
 cat > /etc/systemd/system/ivorysql.service <<EOF
@@ -554,13 +531,12 @@ After=network.target local-fs.target
 Type=forking
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
-Environment=PATH=$INSTALL_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=PGDATA=$DATA_DIR
 OOMScoreAdjust=-1000
 ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
-TimeoutSec=300  # 5分钟超时
+TimeoutSec=0
 Restart=on-failure
 RestartSec=5s
 
@@ -574,7 +550,6 @@ EOF
 }
 
 # -------------------------- 安装验证 --------------------------
-# 最终安装验证和服务启动
 verify_installation() {
     CURRENT_STAGE "安装验证"
     
@@ -589,7 +564,6 @@ verify_installation() {
     }
     STEP_SUCCESS "服务启动成功"
 
-    # 服务状态监控
     STEP_BEGIN "监控服务状态"
     for i in {1..15}; do
         if systemctl is-active --quiet ivorysql; then
@@ -604,21 +578,18 @@ verify_installation() {
         sleep 1
     done
     
-    # 安装成功信息汇总
     echo -e "\n\033[32m================ 安装成功 ================\033[0m"
     cat <<EOF
 安装目录: $INSTALL_DIR
 数据目录: $DATA_DIR
 日志目录: $LOG_DIR
-服务用户: $SERVICE_USER
-数据库超级用户: $DB_SUPERUSER
 服务状态: $(systemctl is-active ivorysql)
 数据库版本: $(${INSTALL_DIR}/bin/postgres --version)
 
 管理命令: 
   systemctl [start|stop|status] ivorysql
   journalctl -u ivorysql -f
-  sudo -u ivorysql '${INSTALL_DIR}/bin/psql -U $DB_SUPERUSER'
+  sudo -u ivorysql '${INSTALL_DIR}/bin/psql'
 
 安装时间: $(date)
 安装耗时: $SECONDS 秒
