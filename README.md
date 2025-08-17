@@ -242,18 +242,22 @@ export PGDATA
 ## 4. 使用指南
 
 ### 4.1 准备工作
+1. 使用root权限：
+   ```bash
+   su -
+   ```
 
-1. 创建配置文件目录：
+2. 创建配置文件目录：
    ```bash
    sudo mkdir -p /etc/ivorysql
    ```
 
-2. 创建配置文件：
+3. 创建配置文件：
    ```bash
    sudo nano /etc/ivorysql/install.conf
    ```
 
-3. 填写配置内容（参考以下示例）：
+4. 填写配置内容（参考以下示例）：
    ```ini
    # IvorySQL 安装配置
    INSTALL_DIR=/opt/ivorysql
