@@ -607,8 +607,8 @@ main() {
     
     check_root         # Root权限检查
     load_config        # 配置加载
-    init_logging       # 日志初始化
     setup_user         # 用户管理
+    init_logging       # 日志初始化
     detect_environment # 环境检测
     install_dependencies # 依赖安装
     compile_install    # 源码编译安装
