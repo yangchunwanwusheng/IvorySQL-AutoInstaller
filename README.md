@@ -268,7 +268,7 @@ export PGDATA
 
 1. 下载安装脚本：
    ```bash
-   wget https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller
+   wget https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller/blob/main/AutoInstall.sh
    ```
 
 2. 添加执行权限：
