@@ -49,7 +49,7 @@ handle_error() {
 trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR  # 注册错误处理
 
 # -------------------------- 配置验证器 --------------------------
-# 配置文件项验证
+# 配置文件项极验证
 validate_config() {
     local key=$1 value=$2
     
@@ -111,7 +111,7 @@ validate_config() {
         REPO_URL)
             # URL格式验证
             if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
-                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
+                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$极value')"
             fi
             
             # 官方源验证
@@ -234,6 +234,10 @@ detect_environment() {
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
+    # 记录操作系统ID和版本
+    OS_ID="$ID"
+    OS_VERSION_ID="$VERSION_ID"
+    
     # 操作系统特定处理
     case "$ID" in
         centos|rhel|almalinux|rocky|fedora)
@@ -311,7 +315,7 @@ install_dependencies() {
     # 定义依赖（添加ICU库）
     declare -A OS_DEPS=(
         [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget libicu-devel"
-        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget libicu-dev"
+        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget libicu-dev pkg-config"
         [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget libicu-devel"
     )
     
@@ -321,7 +325,7 @@ install_dependencies() {
         [suse]="devel_basis"
     )
 
-    case $ID in
+    case $OS_ID in
         centos|rhel|almalinux|rocky|fedora)
             STEP_BEGIN "安装RHEL依赖"
             $PKG_MANAGER install -y ${OS_DEPS[rhel]} || 
@@ -340,13 +344,18 @@ install_dependencies() {
         ubuntu|debian)
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
-            $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
+            $PKG极MANAGER update -y || STEP_WARNING "包列表更新跳过"
             
             $PKG_MANAGER install -y ${OS_DEPS[debian]} || 
                 STEP_FAIL "基础依赖安装失败"
                 
             $PKG_MANAGER install -y ${DEV_TOOLS[debian]} || 
                 STEP_FAIL "开发工具安装失败"
+                
+            # 额外安装 pkg-config（对Debian至关重要）
+            if ! command -v pkg-config >/dev/null; then
+                $PKG_MANAGER install -y pkg-config || STEP_FAIL "pkg-config安装失败"
+            fi
                 
             STEP_SUCCESS "依赖安装完成"
             ;;
@@ -365,27 +374,38 @@ install_dependencies() {
             ;;
     esac
     
-    # ICU验证
+    # ICU验证（针对Debian特别处理）
     STEP_BEGIN "验证ICU库安装"
-    if [[ -f /usr/include/unicode/ucol.h || \
-          -f /usr/include/x86_64-linux-gnu/unicode/ucol.h || \
-          -f /usr/include/unicode/utypes.h ]]; then
+    local icu_header_found=0
+    local icu_lib_found=0
+    
+    # 检查头文件
+    if [[ -f /usr/include/unicode/ucol.h ]] || \
+       [[ -f /usr/include/x86_64-linux-gnu/unicode/ucol.h ]] || \
+       [[ -f /usr/include/unicode/utypes.h ]]; then
+        icu_header_found=1
+    fi
+    
+    # 检查库文件
+    if [[ -f /usr/lib/x86_64-linux-gnu/libicuuc.so ]] || \
+       [[ -f /usr/lib/libicuuc.so ]]; then
+        icu_lib_found=1
+    fi
+    
+    if [[ $icu_header_found -eq 1 && $icu_lib_found -eq 1 ]]; then
         STEP_SUCCESS "ICU库已正确安装"
     else
-        STEP_WARNING "未检测到ICU头文件"
-        find /usr/include -name "ucol.h" -print || :
-    fi
-
-    # 验证开发工具
-    STEP_BEGIN "验证开发工具"
-    for cmd in gcc make flex bison; do
-        if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_FAIL "工具缺失: $cmd"
+        STEP_WARNING "ICU组件不完整，尝试使用pkg-config"
+        
+        if command -v pkg-config >/dev/null; then
+            echo "ICU配置信息:"
+            pkg-config --cflags --libs icu-uc || :
+            echo
+            STEP_SUCCESS "将使用pkg-config配置ICU"
         else
-            echo "检测到 $cmd: $(command -v $cmd)"
+            STEP_FAIL "pkg-config不可用，无法配置ICU"
         fi
-    done
-    STEP_SUCCESS "开发工具验证完成"
+    fi
 }
 
 # -------------------------- 用户管理 --------------------------
@@ -443,7 +463,7 @@ compile_install() {
     # 版本切换
     if [[ -n "$TAG" ]]; then
         STEP_BEGIN "验证标签 ($TAG)"
-        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $极TAG"
+        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
         COMMIT_ID=$(git rev-parse --short HEAD)
         STEP_SUCCESS "标签 $TAG (commit: $COMMIT_ID)"
     else
@@ -462,12 +482,62 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项（修复SSL问题，强制使用ICU）
-    STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+    # 针对Debian的ICU特殊处理
+    local CONFIGURE_OPTS=""
+    if [[ "$OS_ID" == "debian" ]]; then
+        STEP_BEGIN "应用Debian系统的ICU修复"
+        
+        # 检查是否安装pkg-config
+        if command -v pkg-config >/dev/null; then
+            STEP_SUCCESS "已安装pkg-config"
+            
+            # 获取ICU配置
+            ICUT_CFLAGS=$(pkg-config --cflags icu-uc)
+            ICUT_LIBS=$(pkg-config --libs icu-uc)
+            
+            if [[ -n "$ICU_CFLAGS" && -n "$ICU_LIBS" ]]; then
+                STEP_SUCCESS "检测到ICU配置: CFLAGS=$ICU_CFLAGS LIBS=$ICU_LIBS"
+                CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+                CONFIGURE_OPTS+=" ICU_CFLAGS='$ICU_CFLAGS' ICU_LIBS='$ICU_LIBS'"
+            else
+                # 尝试确定Debian版本
+                DEBIAN_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release | cut -d. -f1)
+                
+                # 根据Debian版本指定路径
+                case "$DEBIAN_VERSION" in
+                    10|11|12)
+                        ICU_PATH="/usr/include/x86_64-linux-gnu"
+                        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+                        CONFIGURE_OPTS+=" --with-includes=$ICU_PATH"
+                        STEP_SUCCESS "使用Debian $DEBIAN_VERSION的ICU路径: $ICU_PATH"
+                        ;;
+                    *)
+                        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+                        CONFIGURE_OPTS+=" ICU_CFLAGS=\"-I/usr/include/ -I/usr/include/x86_64-linux-gnu\" ICU_LIBS=\"-L/usr/lib/x86_64-linux-gnu -licuuc -licudata\""
+                        STEP_SUCCESS "使用默认ICU路径"
+                        ;;
+                esac
+            fi
+        else
+            STEP_WARNING "未安装pkg-config，尝试使用默认配置"
+            CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+        fi
+    else
+        # 非Debian系统使用标准配置
+        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
+    fi
     
+    # 显示最终使用的配置选项
+    STEP_BEGIN "配置编译参数"
     echo "使用配置选项: $CONFIGURE_OPTS"
-    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    eval ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    
+    # 检查ICU是否成功配置
+    if grep -q "checking for ICU... no" config.log; then
+        echo "=========== ICU配置详情 ==========="
+        grep -A 30 "checking for ICU" config.log
+        STEP_FAIL "ICU配置失败，请检查日志"
+    fi
     STEP_SUCCESS "配置完成"
 
     # 编译过程（增强错误处理）
@@ -484,9 +554,8 @@ compile_install() {
         if grep -q 'icu.h' "${COMPILE_LOG}"; then
             STEP_WARNING "ICU头文件相关问题检测"
             echo "请检查: "
-            echo "1. /usr/include/unicode/ 目录是否存在"
-            echo "2. 安装路径是否在gcc搜索路径中"
-            echo "尝试临时解决方案: export CFLAGS=\"-I/usr/include/unicode\""
+            echo "1. /usr/include/unicode/ 或 /usr/include/x86_64-linux-gnu/unicode/ 目录是否存在"
+            echo "2. 尝试重新安装libicu-dev: sudo apt-get install --reinstall libicu-dev"
         fi
         
         STEP_FAIL "编译失败，完整日志: ${COMPILE_LOG}"
@@ -649,9 +718,9 @@ main() {
     
     check_root         # Root权限检查
     load_config        # 配置加载
-    setup_user         # 用户管理
     init_logging       # 日志初始化
     detect_environment # 环境检测
+    setup_user         # 用户管理
     install_dependencies # 依赖安装
     compile_install    # 源码编译安装
     post_install       # 安装后配置
@@ -659,4 +728,3 @@ main() {
 }
 
 main "$@"
-
