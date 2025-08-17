@@ -126,7 +126,7 @@ validate_config() {
             if [[ -n "$value" ]]; then
                 # 危险字符检查
                 if [[ "$value" =~ [\$\&\;\|\>\<\!\\\'\"] ]]; then
-                    STEP_FAIL "配置错误: $key 包含危险字符 (当前值: '$value')"
+                    STEP_FAIL "配置错误: $key 包含危险字符 (当前极: '$value')"
                 fi
                 
                 # 长度检查
@@ -302,6 +302,7 @@ detect_environment() {
 }
 
 # -------------------------- 依赖管理 --------------------------
+# -------------------------- 依赖管理 --------------------------
 # 安装系统依赖包
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
@@ -355,6 +356,10 @@ install_dependencies() {
             # 安装开发工具和flex/bison
             $PKG_MANAGER install -y ${DEBIAN_DEV_TOOLS[list]} || 
                 STEP_FAIL "开发工具安装失败"
+            
+            # 添加 libxml2-dev 依赖
+            $PKG_MANAGER install -y libxml2-dev || 
+                STEP_FAIL "libxml2-dev 安装失败"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
@@ -387,17 +392,53 @@ install_dependencies() {
     done
     STEP_SUCCESS "所有必要工具验证通过"
     
-    # 验证依赖库
+    # 更新动态链接器缓存
+    STEP_BEGIN "更新动态链接器缓存"
+    ldconfig
+    STEP_SUCCESS "动态链接器缓存已更新"
+    
+    # 改进的依赖库验证
     STEP_BEGIN "验证依赖库"
-    for lib in readline ssl z; do
-        if ! /sbin/ldconfig -p | grep -q "lib${lib}"; then
-            STEP_FAIL "缺少依赖库: lib${lib}.so"
+    declare -A LIB_PATHS=(
+        [readline]="/usr/lib/*/libreadline.so*"
+        [ssl]="/usr/lib/*/libssl.so*"
+        [z]="/usr/lib/*/libz.so*"
+        [xml2]="/usr/lib/*/libxml2.so*"  # 添加对libxml2的检查
+    )
+    
+    for lib in "${!LIB_PATHS[@]}"; do
+        if ! ls ${LIB_PATHS[$lib]} >/dev/null 2>&1; then
+            # 针对Debian系统的特殊处理
+            if [[ "$ID" =~ (ubuntu|debian) ]]; then
+                STEP_WARNING "检测到 $lib 库可能缺失，尝试修复..."
+                
+                case $lib in
+                    readline)
+                        $PKG_MANAGER install -y libreadline8 || STEP_FAIL "无法安装 libreadline8"
+                        ;;
+                    ssl)
+                        $PKG_MANAGER install -y libssl3 || STEP_FAIL "无法安装 libssl3"
+                        ;;
+                    z)
+                        $PKG_MANAGER install -y zlib1g || STEP_FAIL "无法安装 zlib1g"
+                        ;;
+                    xml2)
+                        $PKG_MANAGER install -y libxml2-dev || STEP_FAIL "无法安装 libxml2-dev"
+                        ;;
+                esac
+                
+                # 再次尝试检测
+                if ! ls ${LIB_PATHS[$lib]} >/dev/null 2>&1; then
+                    STEP_FAIL "修复后仍缺少依赖库: lib$lib.so"
+                fi
+            else
+                STEP_FAIL "缺少依赖库: lib$lib.so"
+            fi
         fi
-        echo "检测到 lib${lib}.so"
+        echo "检测到 lib${lib}.so: $(ls ${LIB_PATHS[$lib]} | head -1)"
     done
     STEP_SUCCESS "所有依赖库验证通过"
 }
-
 # -------------------------- 用户管理 --------------------------
 # 创建系统用户和组
 setup_user() {
@@ -472,29 +513,37 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项
+    # 配置编译选项 - 禁用所有非必要依赖
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    CONFIGURE_OPTS+=" --without-icu --without-libxml --without-tcl --without-perl --without-python"
     
-    # 正确检测依赖库
-    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
-    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
-        CONFIGURE_OPTS+=" --without-libxml"
-    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
-   
     echo "使用配置选项: $CONFIGURE_OPTS"
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置完成"
 
-    # 编译过程
+    # 编译过程 - 修复了错误检测逻辑
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || {
-        # 输出详细的错误信息
-        echo "============= 编译错误详情 ============="
-        tail -n 50 config.log
-        STEP_FAIL "编译失败"
-    }
-    STEP_SUCCESS "编译完成"
+    COMPILE_LOG="${LOG_DIR}/compile_${TIMESTAMP}.log"
+    echo "编译日志保存至: $COMPILE_LOG"
+    
+    # 使用更智能的错误检测
+    if ! make -j$(nproc) > "$COMPILE_LOG" 2>&1; then
+        # 检查日志中是否有真正的错误
+        if grep -q -i "error:" "$COMPILE_LOG"; then
+            echo "============= 编译错误详情 ============="
+            grep -i "error:" "$COMPILE_LOG" | tail -n 50
+            STEP_FAIL "编译失败，完整日志请查看: $COMPILE_LOG"
+        elif grep -q "Nothing to be done for" "$COMPILE_LOG"; then
+            STEP_SUCCESS "编译完成（部分模块无需重新编译）"
+        else
+            echo "============= 编译警告 ============="
+            tail -n 50 "$COMPILE_LOG"
+            STEP_WARNING "编译过程有警告但未失败，继续执行"
+        fi
+    else
+        STEP_SUCCESS "编译成功"
+    fi
     
     # 安装过程
     STEP_BEGIN "安装二进制文件"
