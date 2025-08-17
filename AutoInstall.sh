@@ -51,7 +51,7 @@ trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR  # 注册错误处理
 validate_config() {
     local key=$1 value=$2
     
-    case $key in
+    case $极key in
         INSTALL_DIR|DATA_DIR|LOG_DIR)
             # 路径格式验证
             if [[ ! "$value" =~ ^/[^[:space:]]+$ ]]; then
@@ -90,7 +90,7 @@ validate_config() {
             
             # 命名规范验证
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
-                STEP_FAIL "配置错误: $key 命名无效 (当前值: '$value')"
+                STEP_FAIL "极配置错误: $key 命名无效 (当前值: '$value')"
                 echo "命名规则: 以字母或下划线开头，可包含字母、数字、下划线(_)和连字符(-)，长度1-32字符"
             fi
             
@@ -247,7 +247,7 @@ detect_environment() {
                     PKG_MANAGER="yum"
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
-                STEP_SUCCESS "使用包管理器: $PKG_MANAGER"
+                STEP_SUCCESS "使用包管理器: $PKG_M极ANAGER"
             else
                 STEP_FAIL "不支持的版本: $RHEL_VERSION"
             fi
@@ -302,49 +302,37 @@ detect_environment() {
 }
 
 # -------------------------- 依赖管理 --------------------------
-# 安装系统依赖包
+# 根据官方文档更新依赖安装部分
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    # 官方基础依赖
-    local OFFICIAL_BASE_DEPS="bison readline-devel zlib-devel openssl-devel"
-    # 开发工具（必需）
-    local DEV_TOOLS="gcc make flex bison"
+    # 根据官方文档定义依赖
+    declare -A OS_DEPS=(
+        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget"
+        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget"
+        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget"
+    )
     
-    # 确保安装所有必需的SSL库
-    local SSL_DEPS="libssl-dev"
-    local REGEX_DEPS="libpcre3-dev"
-    
-    # OS特定依赖
-    declare -A OS_SPECIFIC_DEPS=(
-        [rhel_base]="flex"  
-        [rhel_group]="Development Tools"
-        [rhel_ssl]="openssl-devel"
-        [debian_base]="flex libreadline-dev $SSL_DEPS $REGEX_DEPS"
-        [debian_extra]="build-essential"
-        [suse_base]="bison-devel readline-devel zlib-devel libopenssl-devel flex"
+    declare -A DEV_TOOLS=(
+        [rhel]="Development Tools"
+        [debian]="build-essential"
+        [suse]="devel_basis"
     )
 
     case $ID in
-        centos|rhel|almalinux|rocky)
+        centos|rhel|almalinux|rocky|fedora)
             STEP_BEGIN "安装RHEL依赖"
-            $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
-            $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
-            
-            $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[rhel_ssl]} || 
+            $PKG_MANAGER install -y ${OS_DEPS[rhel]} || 
                 STEP_FAIL "基础依赖安装失败"
-                
+            
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || 
-                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER group install -y "${DEV_TOOLS[rhel]}" || 
+                    STEP_FAIL "开发工具组安装失败"
             else
                 $PKG_MANAGER groupinstall -y "Development Tools" || 
-                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                    STEP_FAIL "开发工具组安装失败"
             fi
-            
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || 
-                STEP_WARNING "flex安装失败（继续执行）"
-            STEP_SUCCESS "RHEL依赖安装完成"
+            STEP_SUCCESS "依赖安装完成"
             ;;
             
         ubuntu|debian)
@@ -352,55 +340,39 @@ install_dependencies() {
             export DEBIAN_FRONTEND=noninteractive
             $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
             
-            local UBUNTU_BASE_DEPS=$(echo $OFFICIAL_BASE_DEPS | sed '
-                s/readline-devel/libreadline-dev/g;
-                s/zlib-devel/zlib1g-dev/g;
-                s/openssl-devel/libssl-dev/g;
-            ')
-            
-            $PKG_MANAGER install -y $UBUNTU_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[debian_base]} || 
+            $PKG_MANAGER install -y ${OS_DEPS[debian]} || 
                 STEP_FAIL "基础依赖安装失败"
                 
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_extra]} || 
-                STEP_WARNING "build-essential安装失败（继续执行）"
-            STEP_SUCCESS "Debian依赖安装完成"
+            $PKG_MANAGER install -y ${DEV_TOOLS[debian]} || 
+                STEP_FAIL "开发工具安装失败"
+                
+            STEP_SUCCESS "依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_base]} $DEV_TOOLS || 
+            
+            $PKG_MANAGER install -y ${OS_DEPS[suse]} || 
                 STEP_FAIL "基础依赖安装失败"
-            STEP_SUCCESS "SUSE依赖安装完成"
+                
+            $PKG_MANAGER install -y -t pattern ${DEV_TOOLS[suse]} || 
+                STEP_FAIL "开发工具安装失败"
+                
+            STEP_SUCCESS "依赖安装完成"
             ;;
     esac
     
-    STEP_BEGIN "验证编译工具"
+    # 验证开发工具
+    STEP_BEGIN "验证开发工具"
     for cmd in gcc make flex bison; do
         if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_WARNING "工具缺失: $cmd (将尝试继续编译)"
+            STEP_FAIL "工具缺失: $cmd"
         else
             echo "检测到 $cmd: $(command -v $cmd)"
         fi
     done
-    
-    # 特别验证OpenSSL库
-    STEP_BEGIN "验证SSL库"
-    if ! /sbin/ldconfig -p | grep -q libssl.so; then
-        STEP_WARNING "libssl未找到！尝试重新安装"
-        case $ID in
-            ubuntu|debian) $PKG_MANAGER install --reinstall libssl1.1 libssl-dev -y ;;
-            centos|rhel) $PKG_MANAGER reinstall openssl-libs openssl-devel -y ;;
-        esac
-    fi
-    
-    # 创建备用链接（解决某些系统中路径不一致的问题）
-    if [[ ! -e /usr/include/openssl/ssl.h ]]; then
-        if [[ -e /usr/local/include/openssl/ssl.h ]]; then
-            ln -s /usr/local/include/openssl /usr/include/openssl || true
-        fi
-    fi
-    STEP_SUCCESS "SSL库验证完成"
+    STEP_SUCCESS "开发工具验证完成"
 }
 
 # -------------------------- 用户管理 --------------------------
@@ -426,7 +398,7 @@ setup_user() {
 }
 
 # -------------------------- 源码编译 --------------------------
-# 从源码编译安装IvorySQL
+# 根据官方文档更新源码编译配置部分
 compile_install() {
     CURRENT_STAGE "源码编译安装"
     
@@ -477,24 +449,29 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项（修复SSL问题）
+    # 配置编译选项 - 根据官方文档更新
     STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
-    # 正确检测依赖库
-    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
-    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
-        CONFIGURE_OPTS+=" --without-libxml"
-    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
-   
-    echo "使用配置选项: $CONFIGURE_OPTS"
-    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
-    STEP_SUCCESS "配置完成"
+    # 根据官方文档使用--prefix指定安装路径
+    if [[ -z "$INSTALL_DIR" ]]; then
+        STEP_WARNING "未指定安装路径，使用默认路径 /usr/local/pgsql"
+        INSTALL_DIR="/usr/local/pgsql"
+    fi
+    
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR"
+    
+    # 根据官方文档显示配置过程
+    echo "运行配置命令: ./configure $CONFIGURE_OPTS"
+    ./configure $CONFIGURE_OPTS || {
+        echo "============= 配置错误详情 ============="
+        tail -n 50 config.log
+        STEP_FAIL "配置失败"
+    }
+    STEP_SUCCESS "配置完成 - 安装路径: $INSTALL_DIR"
 
     # 编译过程
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
     make -j$(nproc) || {
-        # 输出详细的错误信息
         echo "============= 编译错误详情 ============="
         tail -n 50 config.log
         STEP_FAIL "编译失败"
@@ -506,6 +483,10 @@ compile_install() {
     make install || STEP_FAIL "安装失败"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
     STEP_SUCCESS "成功安装到: $INSTALL_DIR"
+    
+    # 注意根据官方文档提示后续步骤
+    STEP_WARNING "注意: 如果你通过--prefix指定了自定义安装目录"
+    STEP_WARNING "后续文档中的默认路径(/usr/local/pgsql)需替换为你的自定义路径"
 }
 
 # -------------------------- 后期配置 --------------------------
@@ -581,6 +562,10 @@ EOF
     systemctl daemon-reload
     systemctl enable ivorysql
     STEP_SUCCESS "服务配置完成"
+    
+    # 根据官方文档提示
+    STEP_WARNING "注意: 如果你通过--prefix指定了自定义安装目录"
+    STEP_WARNING "请将服务文件中的$INSTALL_DIR替换为你的实际安装路径"
 }
 
 # -------------------------- 安装验证 --------------------------
@@ -627,7 +612,15 @@ verify_installation() {
 
 安装时间: $(date)
 安装耗时: $SECONDS 秒
+
 EOF
+    
+    # 根据官方文档提示
+    if [[ "$INSTALL_DIR" != "/usr/local/pgsql" ]]; then
+        echo -e "\033[33m重要提示: 你使用了自定义安装路径 $INSTALL_DIR"
+        echo "请确保在所有后续操作中使用此路径替代默认的/usr/local/pgsql"
+        echo -e "\033[0m"
+    fi
 }
 
 # -------------------------- 主流程 --------------------------
@@ -652,5 +645,4 @@ main() {
 
 main "$@"
 
-main "$@"  
 
