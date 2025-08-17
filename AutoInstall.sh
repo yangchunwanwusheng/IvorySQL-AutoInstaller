@@ -173,8 +173,6 @@ load_config() {
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
     fi
     
-    
-    
     # 配置内容有效性验证
     STEP_BEGIN "检查配置内容有效性"
     while IFS='=' read -r key value; do
@@ -183,9 +181,6 @@ load_config() {
         validate_config "$key" "$value"
     done < "$CONFIG_FILE"
     STEP_SUCCESS "配置内容有效性验证通过"
-    
-  
- 
 }
 
 # -------------------------- 日志管理 --------------------------
@@ -195,7 +190,6 @@ init_logging() {
     
     STEP_BEGIN "创建日志目录"
     mkdir -p "$LOG_DIR" || STEP_FAIL "无法创建日志目录 $LOG_DIR"
-    
     
     chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR"
     STEP_SUCCESS "日志目录已创建并设置权限"
@@ -312,15 +306,21 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-   
+    # 官方基础依赖
     local OFFICIAL_BASE_DEPS="bison readline-devel zlib-devel openssl-devel"
     # 开发工具（必需）
     local DEV_TOOLS="gcc make flex bison"
-
+    
+    # 确保安装所有必需的SSL库
+    local SSL_DEPS="libssl-dev"
+    local REGEX_DEPS="libpcre3-dev"
+    
+    # OS特定依赖
     declare -A OS_SPECIFIC_DEPS=(
         [rhel_base]="flex"  
         [rhel_group]="Development Tools"
-        [debian_base]="flex libreadline-dev libssl-dev zlib1g-dev"
+        [rhel_ssl]="openssl-devel"
+        [debian_base]="flex libreadline-dev $SSL_DEPS $REGEX_DEPS"
         [debian_extra]="build-essential"
         [suse_base]="bison-devel readline-devel zlib-devel libopenssl-devel flex"
     )
@@ -331,15 +331,19 @@ install_dependencies() {
             $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
             $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
             
-            $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
+            $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[rhel_ssl]} || 
+                STEP_FAIL "基础依赖安装失败"
                 
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || 
+                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
             else
-                $PKG_MANAGER groupinstall -y "Development Tools" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER groupinstall -y "Development Tools" || 
+                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
             fi
             
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || STEP_WARNING "flex安装失败（继续执行）"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || 
+                STEP_WARNING "flex安装失败（继续执行）"
             STEP_SUCCESS "RHEL依赖安装完成"
             ;;
             
@@ -354,15 +358,19 @@ install_dependencies() {
                 s/openssl-devel/libssl-dev/g;
             ')
             
-            $PKG_MANAGER install -y $UBUNTU_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "基础依赖安装失败"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_extra]} || STEP_WARNING "build-essential安装失败（继续执行）"
+            $PKG_MANAGER install -y $UBUNTU_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[debian_base]} || 
+                STEP_FAIL "基础依赖安装失败"
+                
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_extra]} || 
+                STEP_WARNING "build-essential安装失败（继续执行）"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_base]} $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_base]} $DEV_TOOLS || 
+                STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
@@ -375,7 +383,24 @@ install_dependencies() {
             echo "检测到 $cmd: $(command -v $cmd)"
         fi
     done
-    STEP_SUCCESS "核心编译工具验证完成"
+    
+    # 特别验证OpenSSL库
+    STEP_BEGIN "验证SSL库"
+    if ! /sbin/ldconfig -p | grep -q libssl.so; then
+        STEP_WARNING "libssl未找到！尝试重新安装"
+        case $ID in
+            ubuntu|debian) $PKG_MANAGER install --reinstall libssl1.1 libssl-dev -y ;;
+            centos|rhel) $PKG_MANAGER reinstall openssl-libs openssl-devel -y ;;
+        esac
+    fi
+    
+    # 创建备用链接（解决某些系统中路径不一致的问题）
+    if [[ ! -e /usr/include/openssl/ssl.h ]]; then
+        if [[ -e /usr/local/include/openssl/ssl.h ]]; then
+            ln -s /usr/local/include/openssl /usr/include/openssl || true
+        fi
+    fi
+    STEP_SUCCESS "SSL库验证完成"
 }
 
 # -------------------------- 用户管理 --------------------------
@@ -452,19 +477,28 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项
+    # 配置编译选项（修复SSL问题）
     STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR "
-    [[ ! -f /usr/include/icu.h ]] && CONFIGURE_OPTS+=" --without-icu"
-    [[ ! -f /usr/include/libxml2/libxml/parser.h ]] && CONFIGURE_OPTS+=" --without-libxml"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    
+    # 正确检测依赖库
+    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
+    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
+        CONFIGURE_OPTS+=" --without-libxml"
     [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
    
+    echo "使用配置选项: $CONFIGURE_OPTS"
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
-    STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
-    
+    STEP_SUCCESS "配置完成"
+
     # 编译过程
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || STEP_FAIL "编译失败"
+    make -j$(nproc) || {
+        # 输出详细的错误信息
+        echo "============= 编译错误详情 ============="
+        tail -n 50 config.log
+        STEP_FAIL "编译失败"
+    }
     STEP_SUCCESS "编译完成"
     
     # 安装过程
@@ -498,7 +532,7 @@ post_install() {
     user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
     cat > "$user_home/.bash_profile" <<EOF
 # --- IvorySQL Environment Configuration ---
-PATH="$INSTALL_DIR/bin:\$PATH"
+PATH="$INSTALL_DIR/bin:\\\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
@@ -615,6 +649,8 @@ main() {
     post_install       # 安装后配置
     verify_installation # 安装验证
 }
+
+main "$@"
 
 main "$@"  
 
