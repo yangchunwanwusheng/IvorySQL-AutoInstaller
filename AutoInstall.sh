@@ -4,6 +4,8 @@ set -eo pipefail
 # -------------------------- 全局配置 --------------------------
 CONFIG_FILE="/etc/ivorysql/install.conf"  # 主配置文件路径
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)         # 时间戳用于日志和备份
+LOG_DIR="/var/log/ivorysql"              # 日志目录
+COMPILE_LOG="${LOG_DIR}/compile_${TIMESTAMP}.log" # 编译日志文件
 
 # -------------------------- 步骤跟踪系统 --------------------------
 # 阶段标题输出（蓝色）
@@ -51,7 +53,7 @@ trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR  # 注册错误处理
 validate_config() {
     local key=$1 value=$2
     
-    case $极key in
+    case $key in
         INSTALL_DIR|DATA_DIR|LOG_DIR)
             # 路径格式验证
             if [[ ! "$value" =~ ^/[^[:space:]]+$ ]]; then
@@ -90,7 +92,7 @@ validate_config() {
             
             # 命名规范验证
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
-                STEP_FAIL "极配置错误: $key 命名无效 (当前值: '$value')"
+                STEP_FAIL "配置错误: $key 命名无效 (当前值: '$value')"
                 echo "命名规则: 以字母或下划线开头，可包含字母、数字、下划线(_)和连字符(-)，长度1-32字符"
             fi
             
@@ -247,7 +249,7 @@ detect_environment() {
                     PKG_MANAGER="yum"
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
-                STEP_SUCCESS "使用包管理器: $PKG_M极ANAGER"
+                STEP_SUCCESS "使用包管理器: $PKG_MANAGER"
             else
                 STEP_FAIL "不支持的版本: $RHEL_VERSION"
             fi
@@ -306,11 +308,11 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    # 根据官方文档定义依赖
+    # 定义依赖（添加ICU库）
     declare -A OS_DEPS=(
-        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget"
-        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget"
-        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget"
+        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget libicu-devel"
+        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget libicu-dev"
+        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget libicu-devel"
     )
     
     declare -A DEV_TOOLS=(
@@ -363,6 +365,17 @@ install_dependencies() {
             ;;
     esac
     
+    # ICU验证
+    STEP_BEGIN "验证ICU库安装"
+    if [[ -f /usr/include/unicode/ucol.h || \
+          -f /usr/include/x86_64-linux-gnu/unicode/ucol.h || \
+          -f /usr/include/unicode/utypes.h ]]; then
+        STEP_SUCCESS "ICU库已正确安装"
+    else
+        STEP_WARNING "未检测到ICU头文件"
+        find /usr/include -name "ucol.h" -print || :
+    fi
+
     # 验证开发工具
     STEP_BEGIN "验证开发工具"
     for cmd in gcc make flex bison; do
@@ -430,7 +443,7 @@ compile_install() {
     # 版本切换
     if [[ -n "$TAG" ]]; then
         STEP_BEGIN "验证标签 ($TAG)"
-        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
+        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $极TAG"
         COMMIT_ID=$(git rev-parse --short HEAD)
         STEP_SUCCESS "标签 $TAG (commit: $COMMIT_ID)"
     else
@@ -449,27 +462,34 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项（修复SSL问题）
+    # 配置编译选项（修复SSL问题，强制使用ICU）
     STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
     
-    # 正确检测依赖库
-    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
-    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
-        CONFIGURE_OPTS+=" --without-libxml"
-    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
-   
     echo "使用配置选项: $CONFIGURE_OPTS"
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置完成"
 
-    # 编译过程
+    # 编译过程（增强错误处理）
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || {
-        # 输出详细的错误信息
+    {
+        # 完整编译日志记录
+        make -j$(nproc) 2>&1 | tee "${COMPILE_LOG}"
+    } || {
+        # 失败时提取关键错误信息
         echo "============= 编译错误详情 ============="
-        tail -n 50 config.log
-        STEP_FAIL "编译失败"
+        grep -i -E 'error:|undefined reference' "${COMPILE_LOG}" | tail -n 50
+        
+        # 检查常见问题
+        if grep -q 'icu.h' "${COMPILE_LOG}"; then
+            STEP_WARNING "ICU头文件相关问题检测"
+            echo "请检查: "
+            echo "1. /usr/include/unicode/ 目录是否存在"
+            echo "2. 安装路径是否在gcc搜索路径中"
+            echo "尝试临时解决方案: export CFLAGS=\"-I/usr/include/unicode\""
+        fi
+        
+        STEP_FAIL "编译失败，完整日志: ${COMPILE_LOG}"
     }
     STEP_SUCCESS "编译完成"
     
@@ -601,6 +621,10 @@ verify_installation() {
   journalctl -u ivorysql -f
   sudo -u ivorysql '${INSTALL_DIR}/bin/psql'
 
+编译日志: $COMPILE_LOG
+安装日志: ${LOG_DIR}/install_${TIMESTAMP}.log
+错误日志: ${LOG_DIR}/error_${TIMESTAMP}.log
+
 安装时间: $(date)
 安装耗时: $SECONDS 秒
 
@@ -635,5 +659,4 @@ main() {
 }
 
 main "$@"
-
 
