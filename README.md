@@ -276,14 +276,9 @@ export PGDATA
    wget https://raw.githubusercontent.com/yangchunwanwusheng/IvorySQL-AutoInstaller/main/AutoInstall.sh
    ```
 
-2. 添加执行权限：
+2. 运行脚本：
    ```bash
-   chmod +x AutoInstall.sh
-   ```
-
-3. 运行安装脚本：
-   ```bash
-   sudo ./AutoInstall.sh
+   sudo bash ./AutoInstall.sh
    ```
 
 ### 4.3 安装过程监控
