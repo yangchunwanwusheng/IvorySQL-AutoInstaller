@@ -302,45 +302,36 @@ detect_environment() {
 }
 
 # -------------------------- 依赖管理 --------------------------
-# -------------------------- 依赖管理 --------------------------
-# 安装系统依赖包
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    # 定义基础依赖包和开发工具组
-    declare -A BASE_DEPS=(
-        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget"
-        [debian]="libreadline-dev zlib1g-dev libssl-dev wget"
-        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget"
-    )
-    
-    declare -A DEV_TOOLS_GROUP=(
-        [rhel]="Development Tools"
-        [suse]="patterns-devel-base"
-    )
-    
-    declare -A DEBIAN_DEV_TOOLS=(
-        [list]="build-essential flex bison"
+    local OFFICIAL_BASE_DEPS="bison readline-devel zlib-devel openssl-devel"
+    # 开发工具（必需）
+    local DEV_TOOLS="gcc make flex bison"
+
+    declare -A OS_SPECIFIC_DEPS=(
+        [rhel_base]="flex"  
+        [rhel_group]="Development Tools"
+        [debian_base]="flex libreadline-dev libssl-dev zlib1g-dev"
+        [debian_extra]="build-essential"
+        [suse_base]="bison-devel readline-devel zlib-devel libopenssl-devel flex"
     )
 
     case $ID in
-        centos|rhel|almalinux|rocky|fedora)
+        centos|rhel|almalinux|rocky)
             STEP_BEGIN "安装RHEL依赖"
             $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
             $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
             
-            # 安装基础依赖包
-            $PKG_MANAGER install -y ${BASE_DEPS[rhel]} || 
-                STEP_FAIL "基础依赖安装失败"
-            
-            # 安装开发工具组
+            $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
+                
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${DEV_TOOLS_GROUP[rhel]}" || 
-                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
             else
-                $PKG_MANAGER groupinstall -y "${DEV_TOOLS_GROUP[rhel]}" || 
-                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER groupinstall -y "Development Tools" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
             fi
+            
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || STEP_WARNING "flex安装失败（继续执行）"
             STEP_SUCCESS "RHEL依赖安装完成"
             ;;
             
@@ -349,98 +340,37 @@ install_dependencies() {
             export DEBIAN_FRONTEND=noninteractive
             $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
             
-            # 安装基础依赖包
-            $PKG_MANAGER install -y ${BASE_DEPS[debian]} || 
-                STEP_FAIL "基础依赖安装失败"
+            local UBUNTU_BASE_DEPS=$(echo $OFFICIAL_BASE_DEPS | sed '
+                s/readline-devel/libreadline-dev/g;
+                s/zlib-devel/zlib1g-dev/g;
+                s/openssl-devel/libssl-dev/g;
+            ')
             
-            # 安装开发工具和flex/bison
-            $PKG_MANAGER install -y ${DEBIAN_DEV_TOOLS[list]} || 
-                STEP_FAIL "开发工具安装失败"
-            
-            # 添加 libxml2-dev 依赖
-            $PKG_MANAGER install -y libxml2-dev || 
-                STEP_FAIL "libxml2-dev 安装失败"
+            $PKG_MANAGER install -y $UBUNTU_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "基础依赖安装失败"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_extra]} || STEP_WARNING "build-essential安装失败（继续执行）"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
-            
-            # 安装开发工具组
-            $PKG_MANAGER install -y ${DEV_TOOLS_GROUP[suse]} || 
-                STEP_FAIL "开发工具组安装失败"
-            
-            # 安装基础依赖包
-            $PKG_MANAGER install -y ${BASE_DEPS[suse]} || 
-                STEP_FAIL "基础依赖安装失败"
-            
-            # 额外安装flex和bison
-            $PKG_MANAGER install -y flex bison || 
-                STEP_WARNING "flex/bison安装失败（继续执行）"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_base]} $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
     
-    # 验证安装的工具
-    STEP_BEGIN "验证必要工具"
-    for cmd in gcc make flex bison wget; do
+    STEP_BEGIN "验证编译工具"
+    for cmd in gcc make flex bison; do
         if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_FAIL "关键工具缺失: $cmd"
+            STEP_WARNING "工具缺失: $cmd (将尝试继续编译)"
+        else
+            echo "检测到 $cmd: $(command -v $cmd)"
         fi
-        echo "检测到 $cmd: $(command -v $cmd)"
     done
-    STEP_SUCCESS "所有必要工具验证通过"
-    
-    # 更新动态链接器缓存
-    STEP_BEGIN "更新动态链接器缓存"
-    ldconfig
-    STEP_SUCCESS "动态链接器缓存已更新"
-    
-    # 改进的依赖库验证
-    STEP_BEGIN "验证依赖库"
-    declare -A LIB_PATHS=(
-        [readline]="/usr/lib/*/libreadline.so*"
-        [ssl]="/usr/lib/*/libssl.so*"
-        [z]="/usr/lib/*/libz.so*"
-        [xml2]="/usr/lib/*/libxml2.so*"  # 添加对libxml2的检查
-    )
-    
-    for lib in "${!LIB_PATHS[@]}"; do
-        if ! ls ${LIB_PATHS[$lib]} >/dev/null 2>&1; then
-            # 针对Debian系统的特殊处理
-            if [[ "$ID" =~ (ubuntu|debian) ]]; then
-                STEP_WARNING "检测到 $lib 库可能缺失，尝试修复..."
-                
-                case $lib in
-                    readline)
-                        $PKG_MANAGER install -y libreadline8 || STEP_FAIL "无法安装 libreadline8"
-                        ;;
-                    ssl)
-                        $PKG_MANAGER install -y libssl3 || STEP_FAIL "无法安装 libssl3"
-                        ;;
-                    z)
-                        $PKG_MANAGER install -y zlib1g || STEP_FAIL "无法安装 zlib1g"
-                        ;;
-                    xml2)
-                        $PKG_MANAGER install -y libxml2-dev || STEP_FAIL "无法安装 libxml2-dev"
-                        ;;
-                esac
-                
-                # 再次尝试检测
-                if ! ls ${LIB_PATHS[$lib]} >/dev/null 2>&1; then
-                    STEP_FAIL "修复后仍缺少依赖库: lib$lib.so"
-                fi
-            else
-                STEP_FAIL "缺少依赖库: lib$lib.so"
-            fi
-        fi
-        echo "检测到 lib${lib}.so: $(ls ${LIB_PATHS[$lib]} | head -1)"
-    done
-    STEP_SUCCESS "所有依赖库验证通过"
+    STEP_SUCCESS "核心编译工具验证完成"
 }
+
 # -------------------------- 用户管理 --------------------------
-# 创建系统用户和组
 setup_user() {
     CURRENT_STAGE "配置系统用户"
     
@@ -462,7 +392,6 @@ setup_user() {
 }
 
 # -------------------------- 源码编译 --------------------------
-# 从源码编译安装IvorySQL
 compile_install() {
     CURRENT_STAGE "源码编译安装"
     
@@ -472,7 +401,7 @@ compile_install() {
     if [[ ! -d "IvorySQL" ]]; then
         git_clone_cmd="git clone"
         
-        # 版本选择处理
+        # 支持使用标签拉取代码
         if [[ -n "$TAG" ]]; then
             STEP_BEGIN "使用标签获取代码 ($TAG)"
             git_clone_cmd+=" -b $TAG"
@@ -481,6 +410,7 @@ compile_install() {
             git_clone_cmd+=" -b $BRANCH"
         fi
         
+        # 添加进度显示
         git_clone_cmd+=" --progress $REPO_URL"
         
         echo "执行命令: $git_clone_cmd"
@@ -491,7 +421,6 @@ compile_install() {
     fi
     cd "IvorySQL" || STEP_FAIL "无法进入源码目录"
     
-    # 版本切换
     if [[ -n "$TAG" ]]; then
         STEP_BEGIN "验证标签 ($TAG)"
         git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
@@ -513,39 +442,19 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 配置编译选项 - 禁用所有非必要依赖
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
-    CONFIGURE_OPTS+=" --without-icu --without-libxml --without-tcl --without-perl --without-python"
-    
-    echo "使用配置选项: $CONFIGURE_OPTS"
+    [[ ! -f /usr/include/icu.h ]] && CONFIGURE_OPTS+=" --without-icu"
+    [[ ! -f /usr/include/libxml2/libxml/parser.h ]] && CONFIGURE_OPTS+=" --without-libxml"
+    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
+   
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
-    STEP_SUCCESS "配置完成"
-
-    # 编译过程 - 修复了错误检测逻辑
+    STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
+    
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    COMPILE_LOG="${LOG_DIR}/compile_${TIMESTAMP}.log"
-    echo "编译日志保存至: $COMPILE_LOG"
+    make -j$(nproc) || STEP_FAIL "编译失败"
+    STEP_SUCCESS "编译完成"
     
-    # 使用更智能的错误检测
-    if ! make -j$(nproc) > "$COMPILE_LOG" 2>&1; then
-        # 检查日志中是否有真正的错误
-        if grep -q -i "error:" "$COMPILE_LOG"; then
-            echo "============= 编译错误详情 ============="
-            grep -i "error:" "$COMPILE_LOG" | tail -n 50
-            STEP_FAIL "编译失败，完整日志请查看: $COMPILE_LOG"
-        elif grep -q "Nothing to be done for" "$COMPILE_LOG"; then
-            STEP_SUCCESS "编译完成（部分模块无需重新编译）"
-        else
-            echo "============= 编译警告 ============="
-            tail -n 50 "$COMPILE_LOG"
-            STEP_WARNING "编译过程有警告但未失败，继续执行"
-        fi
-    else
-        STEP_SUCCESS "编译成功"
-    fi
-    
-    # 安装过程
     STEP_BEGIN "安装二进制文件"
     make install || STEP_FAIL "安装失败"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
@@ -576,7 +485,7 @@ post_install() {
     user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
     cat > "$user_home/.bash_profile" <<EOF
 # --- IvorySQL Environment Configuration ---
-PATH="$INSTALL_DIR/bin:\\\$PATH"
+PATH="$INSTALL_DIR/bin:\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
@@ -675,7 +584,6 @@ EOF
 }
 
 # -------------------------- 主流程 --------------------------
-# 脚本主执行流程
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
     echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
@@ -683,17 +591,15 @@ main() {
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
     
-    check_root         # Root权限检查
-    load_config        # 配置加载
-    setup_user         # 用户管理
-    init_logging       # 日志初始化
-    detect_environment # 环境检测
-    install_dependencies # 依赖安装
-    compile_install    # 源码编译安装
-    post_install       # 安装后配置
-    verify_installation # 安装验证
+    check_root
+    load_config
+    setup_user
+    init_logging
+    detect_environment
+    install_dependencies
+    compile_install
+    post_install
+    verify_installation
 }
 
 main "$@"
-
-
