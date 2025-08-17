@@ -454,7 +454,7 @@ compile_install() {
     
     # 配置编译选项
     STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR "
     [[ ! -f /usr/include/icu.h ]] && CONFIGURE_OPTS+=" --without-icu"
     [[ ! -f /usr/include/libxml2/libxml/parser.h ]] && CONFIGURE_OPTS+=" --without-libxml"
     [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
