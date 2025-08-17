@@ -102,7 +102,7 @@ graph TD
 | `SERVICE_USER` | 是 | 无 | 服务运行用户（不能使用系统保留名称） |
 | `SERVICE_GROUP` | 是 | 无 | 服务运行组（不能使用系统保留名称） |
 | `REPO_URL` | 是 | 无 | IvorySQL 源码仓库 URL |
-| `LOG_DIR` | 否 | `/var/log/ivorysql` | 日志目录（必须是绝对路径） |
+| `LOG_DIR` | 是 | `/var/log/ivorysql` | 日志目录（必须是绝对路径） |
 | `TAG` | 可选 | 无 | 指定安装的版本标签（优先使用） |
 | `BRANCH` | 可选 | 无 | 指定安装的源码分支 |
 
@@ -265,6 +265,7 @@ export PGDATA
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
    REPO_URL=https://github.com/IvorySQL/IvorySQL.git
+   LOG_DIR=/var/log/ivorysql
    TAG=IvorySQL_4.5.3
    ```
 
