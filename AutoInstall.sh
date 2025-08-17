@@ -4,8 +4,6 @@ set -eo pipefail
 # -------------------------- 全局配置 --------------------------
 CONFIG_FILE="/etc/ivorysql/install.conf"  # 主配置文件路径
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)         # 时间戳用于日志和备份
-LOG_DIR="/var/log/ivorysql"              # 日志目录
-COMPILE_LOG="${LOG_DIR}/compile_${TIMESTAMP}.log" # 编译日志文件
 
 # -------------------------- 步骤跟踪系统 --------------------------
 # 阶段标题输出（蓝色）
@@ -49,7 +47,7 @@ handle_error() {
 trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR  # 注册错误处理
 
 # -------------------------- 配置验证器 --------------------------
-# 配置文件项极验证
+# 配置文件项验证
 validate_config() {
     local key=$1 value=$2
     
@@ -111,7 +109,7 @@ validate_config() {
         REPO_URL)
             # URL格式验证
             if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
-                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$极value')"
+                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
             fi
             
             # 官方源验证
@@ -234,10 +232,6 @@ detect_environment() {
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
-    # 记录操作系统ID和版本
-    OS_ID="$ID"
-    OS_VERSION_ID="$VERSION_ID"
-    
     # 操作系统特定处理
     case "$ID" in
         centos|rhel|almalinux|rocky|fedora)
@@ -308,104 +302,100 @@ detect_environment() {
 }
 
 # -------------------------- 依赖管理 --------------------------
-# 根据官方文档更新依赖安装部分
+# 安装系统依赖包
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    # 定义依赖（添加ICU库）
-    declare -A OS_DEPS=(
-        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget libicu-devel"
-        [debian]="libbison-dev libreadline-dev zlib1g-dev libssl-dev wget libicu-dev pkg-config"
-        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget libicu-devel"
+    # 定义基础依赖包和开发工具组
+    declare -A BASE_DEPS=(
+        [rhel]="bison-devel readline-devel zlib-devel openssl-devel wget"
+        [debian]="libreadline-dev zlib1g-dev libssl-dev wget"
+        [suse]="bison-devel readline-devel zlib-devel libopenssl-devel wget"
     )
     
-    declare -A DEV_TOOLS=(
+    declare -A DEV_TOOLS_GROUP=(
         [rhel]="Development Tools"
-        [debian]="build-essential"
-        [suse]="devel_basis"
+        [suse]="patterns-devel-base"
+    )
+    
+    declare -A DEBIAN_DEV_TOOLS=(
+        [list]="build-essential flex bison"
     )
 
-    case $OS_ID in
+    case $ID in
         centos|rhel|almalinux|rocky|fedora)
             STEP_BEGIN "安装RHEL依赖"
-            $PKG_MANAGER install -y ${OS_DEPS[rhel]} || 
+            $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
+            $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
+            
+            # 安装基础依赖包
+            $PKG_MANAGER install -y ${BASE_DEPS[rhel]} || 
                 STEP_FAIL "基础依赖安装失败"
             
+            # 安装开发工具组
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${DEV_TOOLS[rhel]}" || 
-                    STEP_FAIL "开发工具组安装失败"
+                $PKG_MANAGER group install -y "${DEV_TOOLS_GROUP[rhel]}" || 
+                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
             else
-                $PKG_MANAGER groupinstall -y "Development Tools" || 
-                    STEP_FAIL "开发工具组安装失败"
+                $PKG_MANAGER groupinstall -y "${DEV_TOOLS_GROUP[rhel]}" || 
+                    STEP_WARNING "开发工具组安装部分失败（继续执行）"
             fi
-            STEP_SUCCESS "依赖安装完成"
+            STEP_SUCCESS "RHEL依赖安装完成"
             ;;
             
         ubuntu|debian)
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
-            $PKG极MANAGER update -y || STEP_WARNING "包列表更新跳过"
+            $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
             
-            $PKG_MANAGER install -y ${OS_DEPS[debian]} || 
+            # 安装基础依赖包
+            $PKG_MANAGER install -y ${BASE_DEPS[debian]} || 
                 STEP_FAIL "基础依赖安装失败"
-                
-            $PKG_MANAGER install -y ${DEV_TOOLS[debian]} || 
+            
+            # 安装开发工具和flex/bison
+            $PKG_MANAGER install -y ${DEBIAN_DEV_TOOLS[list]} || 
                 STEP_FAIL "开发工具安装失败"
-                
-            # 额外安装 pkg-config（对Debian至关重要）
-            if ! command -v pkg-config >/dev/null; then
-                $PKG_MANAGER install -y pkg-config || STEP_FAIL "pkg-config安装失败"
-            fi
-                
-            STEP_SUCCESS "依赖安装完成"
+            STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
             
-            $PKG_MANAGER install -y ${OS_DEPS[suse]} || 
+            # 安装开发工具组
+            $PKG_MANAGER install -y ${DEV_TOOLS_GROUP[suse]} || 
+                STEP_FAIL "开发工具组安装失败"
+            
+            # 安装基础依赖包
+            $PKG_MANAGER install -y ${BASE_DEPS[suse]} || 
                 STEP_FAIL "基础依赖安装失败"
-                
-            $PKG_MANAGER install -y -t pattern ${DEV_TOOLS[suse]} || 
-                STEP_FAIL "开发工具安装失败"
-                
-            STEP_SUCCESS "依赖安装完成"
+            
+            # 额外安装flex和bison
+            $PKG_MANAGER install -y flex bison || 
+                STEP_WARNING "flex/bison安装失败（继续执行）"
+            STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
     
-    # ICU验证（针对Debian特别处理）
-    STEP_BEGIN "验证ICU库安装"
-    local icu_header_found=0
-    local icu_lib_found=0
-    
-    # 检查头文件
-    if [[ -f /usr/include/unicode/ucol.h ]] || \
-       [[ -f /usr/include/x86_64-linux-gnu/unicode/ucol.h ]] || \
-       [[ -f /usr/include/unicode/utypes.h ]]; then
-        icu_header_found=1
-    fi
-    
-    # 检查库文件
-    if [[ -f /usr/lib/x86_64-linux-gnu/libicuuc.so ]] || \
-       [[ -f /usr/lib/libicuuc.so ]]; then
-        icu_lib_found=1
-    fi
-    
-    if [[ $icu_header_found -eq 1 && $icu_lib_found -eq 1 ]]; then
-        STEP_SUCCESS "ICU库已正确安装"
-    else
-        STEP_WARNING "ICU组件不完整，尝试使用pkg-config"
-        
-        if command -v pkg-config >/dev/null; then
-            echo "ICU配置信息:"
-            pkg-config --cflags --libs icu-uc || :
-            echo
-            STEP_SUCCESS "将使用pkg-config配置ICU"
-        else
-            STEP_FAIL "pkg-config不可用，无法配置ICU"
+    # 验证安装的工具
+    STEP_BEGIN "验证必要工具"
+    for cmd in gcc make flex bison wget; do
+        if ! command -v $cmd >/dev/null 2>&1; then
+            STEP_FAIL "关键工具缺失: $cmd"
         fi
-    fi
+        echo "检测到 $cmd: $(command -v $cmd)"
+    done
+    STEP_SUCCESS "所有必要工具验证通过"
+    
+    # 验证依赖库
+    STEP_BEGIN "验证依赖库"
+    for lib in readline ssl z; do
+        if ! /sbin/ldconfig -p | grep -q "lib${lib}"; then
+            STEP_FAIL "缺少依赖库: lib${lib}.so"
+        fi
+        echo "检测到 lib${lib}.so"
+    done
+    STEP_SUCCESS "所有依赖库验证通过"
 }
 
 # -------------------------- 用户管理 --------------------------
@@ -482,83 +472,27 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    # 针对Debian的ICU特殊处理
-    local CONFIGURE_OPTS=""
-    if [[ "$OS_ID" == "debian" ]]; then
-        STEP_BEGIN "应用Debian系统的ICU修复"
-        
-        # 检查是否安装pkg-config
-        if command -v pkg-config >/dev/null; then
-            STEP_SUCCESS "已安装pkg-config"
-            
-            # 获取ICU配置
-            ICUT_CFLAGS=$(pkg-config --cflags icu-uc)
-            ICUT_LIBS=$(pkg-config --libs icu-uc)
-            
-            if [[ -n "$ICU_CFLAGS" && -n "$ICU_LIBS" ]]; then
-                STEP_SUCCESS "检测到ICU配置: CFLAGS=$ICU_CFLAGS LIBS=$ICU_LIBS"
-                CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
-                CONFIGURE_OPTS+=" ICU_CFLAGS='$ICU_CFLAGS' ICU_LIBS='$ICU_LIBS'"
-            else
-                # 尝试确定Debian版本
-                DEBIAN_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release | cut -d. -f1)
-                
-                # 根据Debian版本指定路径
-                case "$DEBIAN_VERSION" in
-                    10|11|12)
-                        ICU_PATH="/usr/include/x86_64-linux-gnu"
-                        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
-                        CONFIGURE_OPTS+=" --with-includes=$ICU_PATH"
-                        STEP_SUCCESS "使用Debian $DEBIAN_VERSION的ICU路径: $ICU_PATH"
-                        ;;
-                    *)
-                        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
-                        CONFIGURE_OPTS+=" ICU_CFLAGS=\"-I/usr/include/ -I/usr/include/x86_64-linux-gnu\" ICU_LIBS=\"-L/usr/lib/x86_64-linux-gnu -licuuc -licudata\""
-                        STEP_SUCCESS "使用默认ICU路径"
-                        ;;
-                esac
-            fi
-        else
-            STEP_WARNING "未安装pkg-config，尝试使用默认配置"
-            CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
-        fi
-    else
-        # 非Debian系统使用标准配置
-        CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-icu"
-    fi
-    
-    # 显示最终使用的配置选项
+    # 配置编译选项
     STEP_BEGIN "配置编译参数"
-    echo "使用配置选项: $CONFIGURE_OPTS"
-    eval ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
-    # 检查ICU是否成功配置
-    if grep -q "checking for ICU... no" config.log; then
-        echo "=========== ICU配置详情 ==========="
-        grep -A 30 "checking for ICU" config.log
-        STEP_FAIL "ICU配置失败，请检查日志"
-    fi
+    # 正确检测依赖库
+    [[ ! -f /usr/include/unicode/ucol.h ]] && CONFIGURE_OPTS+=" --without-icu"
+    [[ ! -f /usr/include/libxml/parser.h && ! -f /usr/include/libxml2/libxml/parser.h ]] && 
+        CONFIGURE_OPTS+=" --without-libxml"
+    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
+   
+    echo "使用配置选项: $CONFIGURE_OPTS"
+    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置完成"
 
-    # 编译过程（增强错误处理）
+    # 编译过程
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    {
-        # 完整编译日志记录
-        make -j$(nproc) 2>&1 | tee "${COMPILE_LOG}"
-    } || {
-        # 失败时提取关键错误信息
+    make -j$(nproc) || {
+        # 输出详细的错误信息
         echo "============= 编译错误详情 ============="
-        grep -i -E 'error:|undefined reference' "${COMPILE_LOG}" | tail -n 50
-        
-        # 检查常见问题
-        if grep -q 'icu.h' "${COMPILE_LOG}"; then
-            STEP_WARNING "ICU头文件相关问题检测"
-            echo "请检查: "
-            echo "1. /usr/include/unicode/ 或 /usr/include/x86_64-linux-gnu/unicode/ 目录是否存在"
-            echo "2. 尝试重新安装libicu-dev: sudo apt-get install --reinstall libicu-dev"
-        fi
-        
-        STEP_FAIL "编译失败，完整日志: ${COMPILE_LOG}"
+        tail -n 50 config.log
+        STEP_FAIL "编译失败"
     }
     STEP_SUCCESS "编译完成"
     
@@ -642,10 +576,6 @@ EOF
     systemctl daemon-reload
     systemctl enable ivorysql
     STEP_SUCCESS "服务配置完成"
-    
-    # 根据官方文档提示
-    STEP_WARNING "注意: 如果你通过--prefix指定了自定义安装目录"
-    STEP_WARNING "请将服务文件中的$INSTALL_DIR替换为你的实际安装路径"
 }
 
 # -------------------------- 安装验证 --------------------------
@@ -690,21 +620,9 @@ verify_installation() {
   journalctl -u ivorysql -f
   sudo -u ivorysql '${INSTALL_DIR}/bin/psql'
 
-编译日志: $COMPILE_LOG
-安装日志: ${LOG_DIR}/install_${TIMESTAMP}.log
-错误日志: ${LOG_DIR}/error_${TIMESTAMP}.log
-
 安装时间: $(date)
 安装耗时: $SECONDS 秒
-
 EOF
-    
-    # 根据官方文档提示
-    if [[ "$INSTALL_DIR" != "/usr/local/pgsql" ]]; then
-        echo -e "\033[33m重要提示: 你使用了自定义安装路径 $INSTALL_DIR"
-        echo "请确保在所有后续操作中使用此路径替代默认的/usr/local/pgsql"
-        echo -e "\033[0m"
-    fi
 }
 
 # -------------------------- 主流程 --------------------------
@@ -718,9 +636,9 @@ main() {
     
     check_root         # Root权限检查
     load_config        # 配置加载
+    setup_user         # 用户管理
     init_logging       # 日志初始化
     detect_environment # 环境检测
-    setup_user         # 用户管理
     install_dependencies # 依赖安装
     compile_install    # 源码编译安装
     post_install       # 安装后配置
@@ -728,3 +646,5 @@ main() {
 }
 
 main "$@"
+
+
