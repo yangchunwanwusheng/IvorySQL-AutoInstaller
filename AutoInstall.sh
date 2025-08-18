@@ -1,39 +1,30 @@
 #!/bin/bash
 set -eo pipefail
 
-# -------------------------- 全局配置 --------------------------
-CONFIG_FILE="/etc/ivorysql/install.conf"  # 主配置文件路径
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)         # 时间戳用于日志和备份
+CONFIG_FILE="/etc/ivorysql/install.conf"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# -------------------------- 步骤跟踪系统 --------------------------
-# 阶段标题输出（蓝色）
 CURRENT_STAGE() {
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
 }
 
-# 步骤开始提示
 STEP_BEGIN() {
     echo -e "  → $1..."
 }
 
-# 步骤成功提示（绿色）
 STEP_SUCCESS() {
     echo -e "  \033[32m✓ $1\033[0m"
 }
 
-# 步骤失败处理（红色）
 STEP_FAIL() {
     echo -e "  \033[31m✗ $1\033[0m" >&2
     exit 1
 }
 
-# 步骤警告提示（黄色）
 STEP_WARNING() {
     echo -e "  \033[33m⚠ $1\033[0m"
 }
 
-# -------------------------- 错误处理 --------------------------
-# 全局错误捕获和处理
 handle_error() {
     local line=$1 command=$2
     STEP_FAIL "安装失败！位置: 第 ${line} 行\n命令: ${command}"
@@ -44,21 +35,17 @@ handle_error() {
     echo "3. sudo -u ivorysql '${INSTALL_DIR}/bin/postgres -D ${DATA_DIR} -c logging_collector=on -c log_directory=${LOG_DIR}'"
     exit 1
 }
-trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR  # 注册错误处理
+trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR
 
-# -------------------------- 配置验证器 --------------------------
-# 配置文件项验证
 validate_config() {
     local key=$1 value=$2
     
     case $key in
         INSTALL_DIR|DATA_DIR|LOG_DIR)
-            # 路径格式验证
             if [[ ! "$value" =~ ^/[^[:space:]]+$ ]]; then
                 STEP_FAIL "配置错误: $key 必须是绝对路径且不含空格 (当前值: '$value')"
             fi
             
-            # 路径存在性和权限检查
             if [[ -e "$value" ]]; then
                 if [[ -f "$value" ]]; then
                     STEP_FAIL "配置错误: $key 必须是目录路径，但检测到文件 (当前值: '$value')"
@@ -72,7 +59,6 @@ validate_config() {
                     fi
                 fi
             else
-                # 父目录可写性检查
                 local parent_dir=$(dirname "$value")
                 mkdir -p "$parent_dir" || STEP_FAIL "无法创建父目录: $parent_dir"
                 if [[ ! -w "$parent_dir" ]]; then
@@ -82,19 +68,16 @@ validate_config() {
             ;;
             
         SERVICE_USER|SERVICE_GROUP)
-            # 保留名称检查
             local reserved_users="root bin daemon adm lp sync shutdown halt mail operator games ftp"
             if grep -qw "$value" <<< "$reserved_users"; then
                 STEP_FAIL "配置错误: $key 禁止使用系统保留名称 (当前值: '$value')"
             fi
             
-            # 命名规范验证
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
                 STEP_FAIL "配置错误: $key 命名无效 (当前值: '$value')"
                 echo "命名规则: 以字母或下划线开头，可包含字母、数字、下划线(_)和连字符(-)，长度1-32字符"
             fi
             
-            # 系统存在性检查
             if [[ $key == "SERVICE_USER" ]]; then
                 if ! getent passwd "$value" &>/dev/null; then
                     STEP_SUCCESS "将创建新用户: $value"
@@ -107,33 +90,28 @@ validate_config() {
             ;;
             
         REPO_URL)
-            # URL格式验证
             if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
                 STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
             fi
             
-            # 官方源验证
             if [[ ! "$value" =~ github\.com/IvorySQL/IvorySQL ]]; then
                 STEP_WARNING "警告: 使用的代码库可能不是官方源 ($value)"
                 read -p "确认使用非官方源? (y/N) " -n 1 -r
-                echo # 换行
+                echo
                 [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL "安装中止：用户拒绝非官方源"
             fi
             ;;
             
         BRANCH|TAG)
-            # 版本标识验证
             if [[ -n "$value" ]]; then
-                # 危险字符检查
                 if [[ "$value" =~ [\$\&\;\|\>\<\!\\\'\"] ]]; then
                     STEP_FAIL "配置错误: $key 包含危险字符 (当前极: '$value')"
                 fi
                 
-                # 长度检查
                 if [[ ${#value} -gt 100 ]]; then
                     STEP_WARNING "警告: $key 长度超过100字符 (当前值: '$value')"
                     read -p "确认使用超长标识? (y/N) " -n 1 -r
-                    echo # 换行
+                    echo
                     [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL "安装中止：用户拒绝超长标识"
                 fi
             fi
@@ -141,24 +119,19 @@ validate_config() {
     esac
 }
 
-# -------------------------- 初始化配置 --------------------------
-# 加载并验证配置文件
 load_config() {
     CURRENT_STAGE "配置加载阶段"
     
-    # 配置文件存在性检查
     STEP_BEGIN "检查配置文件是否存在"
     if [[ ! -f "$CONFIG_FILE" ]]; then
         STEP_FAIL "配置文件 $CONFIG_FILE 不存在，请根据模板创建配置文件"
     fi
     STEP_SUCCESS "发现配置文件"
     
-    # 加载配置文件
     STEP_BEGIN "加载配置文件"
     source "$CONFIG_FILE" || STEP_FAIL "无法加载配置文件 $CONFIG_FILE"
     STEP_SUCCESS "配置文件加载成功"
     
-    # 关键配置项验证
     STEP_BEGIN "验证配置完整性"
     declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL")
     for var in "${required_vars[@]}"; do
@@ -166,14 +139,12 @@ load_config() {
     done
     STEP_SUCCESS "配置完整性验证通过"
     
-    # 版本控制设置检查
     if [[ -z "$TAG" && -z "$BRANCH" ]]; then
         STEP_FAIL "必须设置 TAG 或 BRANCH 之一"
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
     fi
     
-    # 配置内容有效性验证
     STEP_BEGIN "检查配置内容有效性"
     while IFS='=' read -r key value; do
         [[ $key =~ ^[[:space:]]*# || -z $key ]] && continue
@@ -183,8 +154,6 @@ load_config() {
     STEP_SUCCESS "配置内容有效性验证通过"
 }
 
-# -------------------------- 日志管理 --------------------------
-# 初始化日志系统
 init_logging() {
     CURRENT_STAGE "日志初始化"
     
@@ -200,8 +169,6 @@ init_logging() {
     STEP_SUCCESS "日志重定向完成"
 }
 
-# -------------------------- 权限检查 --------------------------
-# Root权限验证
 check_root() {
     CURRENT_STAGE "权限检查"
     
@@ -214,12 +181,9 @@ check_root() {
     STEP_SUCCESS "root权限验证通过"
 }
 
-# -------------------------- 环境检测 --------------------------
-# 操作系统环境识别
 detect_environment() {
     CURRENT_STAGE "系统环境检测"
     
-    # 提取主版本号
     get_major_version() {
         grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
         cut -d= -f2 | tr -d '"' | cut -d. -f1
@@ -232,7 +196,6 @@ detect_environment() {
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
-    # 操作系统特定处理
     case "$ID" in
         centos|rhel|almalinux|rocky|fedora)
             RHEL_VERSION=$(get_major_version)
@@ -301,7 +264,6 @@ detect_environment() {
     esac
 }
 
-# -------------------------- 依赖管理 --------------------------
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
@@ -321,14 +283,12 @@ install_dependencies() {
             $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
             $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
             
-            # 安装开发工具组
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             else
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             fi
             
-            # 精确安装核心依赖（避免组安装的潜在遗漏）
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "RHEL依赖安装完成"
             ;;
@@ -360,7 +320,6 @@ install_dependencies() {
     STEP_SUCCESS "核心编译工具验证完成"
 }
 
-# -------------------------- 用户管理 --------------------------
 setup_user() {
     CURRENT_STAGE "配置系统用户"
     
@@ -381,7 +340,6 @@ setup_user() {
     fi
 }
 
-# -------------------------- 源码编译 --------------------------
 compile_install() {
     CURRENT_STAGE "源码编译安装"
     
@@ -391,7 +349,6 @@ compile_install() {
     if [[ ! -d "IvorySQL" ]]; then
         git_clone_cmd="git clone"
         
-        # 支持使用标签拉取代码
         if [[ -n "$TAG" ]]; then
             STEP_BEGIN "使用标签获取代码 ($TAG)"
             git_clone_cmd+=" -b $TAG"
@@ -400,7 +357,6 @@ compile_install() {
             git_clone_cmd+=" -b $BRANCH"
         fi
         
-        # 添加进度显示
         git_clone_cmd+=" --progress $REPO_URL"
         
         echo "执行命令: $git_clone_cmd"
@@ -434,9 +390,43 @@ compile_install() {
     
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
-    [[ ! -f /usr/include/icu.h ]] && CONFIGURE_OPTS+=" --without-icu"
-    [[ ! -f /usr/include/libxml2/libxml/parser.h ]] && CONFIGURE_OPTS+=" --without-libxml"
-    [[ ! -f /usr/include/tcl.h ]] && CONFIGURE_OPTS+=" --without-tcl"
+
+detect_dependency() {
+    local header_path="$1"
+    local pkg_name="$2"
+    local config_tool="$3"
+    
+    if [[ -f "$header_path" ]]; then
+        return 0
+    fi
+    
+    if command -v pkg-config &> /dev/null && pkg-config --exists "$pkg_name"; then
+        return 0
+    fi
+    
+    if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
+        return 0
+    fi
+    
+    return 1
+}
+
+if ! detect_dependency "/usr/include/unicode/utypes.h" "icu-uc" && \
+   ! detect_dependency "/usr/include/icu.h" "icu-uc"; then
+    CONFIGURE_OPTS+=" --without-icu"
+    echo "警告：ICU库未找到，已禁用ICU支持"
+fi
+
+if ! detect_dependency "/usr/include/libxml2/libxml/parser.h" "libxml-2.0" "xml2-config"; then
+    CONFIGURE_OPTS+=" --without-libxml"
+    echo "警告：LibXML2未找到，已禁用XML支持"
+fi
+
+if ! detect_dependency "/usr/include/tcl.h" "tcl" "tclsh" && \
+   ! command -v tclsh &> /dev/null; then
+    CONFIGURE_OPTS+=" --without-tcl"
+    echo "警告：TCL开发环境未找到，已禁用TCL扩展"
+fi
    
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
@@ -451,7 +441,6 @@ compile_install() {
     STEP_SUCCESS "成功安装到: $INSTALL_DIR"
 }
 
-# -------------------------- 后期配置 --------------------------
 post_install() {
     CURRENT_STAGE "安装后配置"
     
@@ -474,12 +463,10 @@ post_install() {
     STEP_BEGIN "配置环境变量"
     user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
     cat > "$user_home/.bash_profile" <<EOF
-# --- IvorySQL Environment Configuration ---
 PATH="$INSTALL_DIR/bin:\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
-# --- End of Configuration ---
 EOF
     chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home/.bash_profile"
     chmod 600 "$user_home/.bash_profile"
@@ -526,7 +513,6 @@ EOF
     STEP_SUCCESS "服务配置完成"
 }
 
-# -------------------------- 安装验证 --------------------------
 verify_installation() {
     CURRENT_STAGE "安装验证"
     
@@ -573,7 +559,6 @@ verify_installation() {
 EOF
 }
 
-# -------------------------- 主流程 --------------------------
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
     echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
