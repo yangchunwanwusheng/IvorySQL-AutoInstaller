@@ -124,27 +124,35 @@ LOG_DIR=/var/log/ivorysql
 TAG=IvorySQL_4.5.3
 ```
 
-### 3.2 依赖管理系统
-
+### 3.2 依赖管理系统  
 脚本会自动检测操作系统类型并安装所需依赖：
 
-#### 核心依赖
-- **编译工具链**：GCC, Make, Flex, Bison
-- **核心库**：readline, zlib, openssl
+#### 核心依赖  
+*必备组件，自动强制安装*  
+- **编译工具链**：GCC, Make, Flex, Bison  
+- **核心库**：readline, zlib, openssl  
 
-#### 可选依赖支持
-| 依赖库 | 检测路径 | 自动处理 |
-|--------|----------|----------|
-| ICU | `/usr/include/icu.h` | 检测不到时添加 `--without-icu` |
-| libxml2 | `/usr/include/libxml2/libxml/parser.h` | 检测不到时添加 `--without-libxml` |
-| TCL | `/usr/include/tcl.h` | 检测不到时添加 `--without-tcl` |
+---
 
-#### 操作系统特定依赖
-| 操作系统 | 额外依赖包 |
-|----------|------------|
-| **RHEL 系列** | `epel-release`, `Development Tools` 组 |
-| **Debian 系列** | `build-essential`, `libreadline-dev`, `libssl-dev`, `zlib1g-dev` |
-| **SUSE 系列** | `bison-devel`, `readline-devel`, `zlib-devel`, `libopenssl-devel` |
+#### 可选依赖支持  
+*智能检测机制，未找到时自动禁用对应功能*  
+
+| 依赖库    | 检测路径                                  | 自动处理                                |  
+|-----------|-------------------------------------------|-----------------------------------------|  
+| **ICU**   | `/usr/include/icu.h`                      | 检测不到时添加 `--without-icu` 编译参数 |  
+| **libxml2**| `/usr/include/libxml2/libxml/parser.h`    | 检测不到时添加 `--without-libxml`      |  
+| **TCL**   | `/usr/include/tcl.h`                      | 检测不到时添加 `--without-tcl`         |  
+
+---
+
+#### 操作系统特定依赖  
+*针对不同发行版自动适配安装命令*  
+
+| 操作系统    | 额外依赖包                                                                 |  
+|-------------|---------------------------------------------------------------------------|  
+| **RHEL 系列**<br>(CentOS/RHEL/Rocky) | epel-release, Development Tools 组                                       |  
+| **Debian 系列**<br>(Ubuntu/Debian)  | build-essential, libreadline-dev, libssl-dev, zlib1g-dev                 |  
+| **SUSE 系列**<br>(openSUSE/SLES)   | bison-devel, readline-devel, zlib-devel, libopenssl-devel                |
 
 ### 3.3 编译流程详解
 
