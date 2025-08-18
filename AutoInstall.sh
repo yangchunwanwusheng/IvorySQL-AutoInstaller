@@ -305,16 +305,14 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    local OFFICIAL_BASE_DEPS="bison readline-devel zlib-devel openssl-devel"
-    # 开发工具（必需）
-    local DEV_TOOLS="gcc make flex bison"
-
     declare -A OS_SPECIFIC_DEPS=(
-        [rhel_base]="flex"  
+        [rhel_base]="readline-devel zlib-devel openssl-devel"
+        [rhel_tools]="gcc make flex bison"
         [rhel_group]="Development Tools"
-        [debian_base]="flex libreadline-dev libssl-dev zlib1g-dev"
-        [debian_extra]="build-essential"
-        [suse_base]="bison-devel readline-devel zlib-devel libopenssl-devel flex"
+        [debian_base]="libreadline-dev zlib1g-dev libssl-dev"
+        [debian_tools]="build-essential flex bison"
+        [suse_base]="readline-devel zlib-devel libopenssl-devel"
+        [suse_tools]="gcc make flex bison"
     )
 
     case $ID in
@@ -323,15 +321,15 @@ install_dependencies() {
             $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
             $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
             
-            $PKG_MANAGER install -y $OFFICIAL_BASE_DEPS $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
-                
+            # 安装开发工具组
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             else
-                $PKG_MANAGER groupinstall -y "Development Tools" || STEP_WARNING "开发工具组安装部分失败（继续执行）"
+                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             fi
             
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} || STEP_WARNING "flex安装失败（继续执行）"
+            # 精确安装核心依赖（避免组安装的潜在遗漏）
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "RHEL依赖安装完成"
             ;;
             
@@ -339,22 +337,14 @@ install_dependencies() {
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
             $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
-            
-            local UBUNTU_BASE_DEPS=$(echo $OFFICIAL_BASE_DEPS | sed '
-                s/readline-devel/libreadline-dev/g;
-                s/zlib-devel/zlib1g-dev/g;
-                s/openssl-devel/libssl-dev/g;
-            ')
-            
-            $PKG_MANAGER install -y $UBUNTU_BASE_DEPS $DEV_TOOLS ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "基础依赖安装失败"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_extra]} || STEP_WARNING "build-essential安装失败（继续执行）"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_base]} $DEV_TOOLS || STEP_FAIL "基础依赖安装失败"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
