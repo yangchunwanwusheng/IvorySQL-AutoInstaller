@@ -203,7 +203,7 @@ detect_environment() {
             
             if [[ $RHEL_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
-            elif [[ $RHEL_VERSION =~ ^(8|9)$ ]]; then
+            elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                 else
@@ -277,6 +277,7 @@ install_dependencies() {
         [suse_tools]="gcc make flex bison"
     )
 
+    # 新增EL10系统支持
     case $ID in
         centos|rhel|almalinux|rocky)
             STEP_BEGIN "安装RHEL依赖"
@@ -289,6 +290,14 @@ install_dependencies() {
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             fi
             
+            # 安装Perl完整环境及pkg-config
+            STEP_BEGIN "安装Perl完整环境"
+            $PKG_MANAGER install -y perl-core perl-App-cpanminus pkgconfig || {
+                STEP_WARNING "部分Perl组件安装失败，尝试基础安装"
+                $PKG_MANAGER install -y perl perl-base || STEP_FAIL "Perl基础环境安装失败"
+            }
+            STEP_SUCCESS "Perl环境安装完成"
+            
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "RHEL依赖安装完成"
             ;;
@@ -297,6 +306,12 @@ install_dependencies() {
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
             $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
+            
+            # 安装Perl完整环境及pkg-config
+            STEP_BEGIN "安装Perl完整环境"
+            $PKG_MANAGER install -y perl perl-base perl-modules pkg-config || STEP_FAIL "Perl环境安装失败"
+            STEP_SUCCESS "Perl环境安装完成"
+            
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
@@ -304,6 +319,12 @@ install_dependencies() {
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
+            
+            # 安装Perl完整环境及pkg-config
+            STEP_BEGIN "安装Perl完整环境"
+            $PKG_MANAGER install -y perl perl-base pkg-config || STEP_FAIL "Perl环境安装失败"
+            STEP_SUCCESS "Perl环境安装完成"
+            
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
@@ -318,6 +339,26 @@ install_dependencies() {
         fi
     done
     STEP_SUCCESS "核心编译工具验证完成"
+    
+    # 新增Perl模块完整性验证
+    STEP_BEGIN "验证Perl模块完整性"
+    if ! perl -e 'use FindBin;' &>/dev/null; then
+        STEP_WARNING "FindBin模块缺失，尝试修复安装"
+        cpanm FindBin || {
+            # 尝试定位FindBin.pm路径
+            FIND_BIN_PATH=$(find /usr -name 'FindBin.pm' 2>/dev/null | head -1)
+            if [[ -n "$FIND_BIN_PATH" ]]; then
+                PERL5LIB="${PERL5LIB}:$(dirname $FIND_BIN_PATH)"
+                export PERL5LIB
+                STEP_SUCCESS "通过PERL5LIB添加FindBin路径: $FIND_BIN_PATH"
+            else
+                STEP_FAIL "无法修复FindBin模块缺失问题"
+            fi
+        }
+        STEP_SUCCESS "FindBin模块修复完成"
+    else
+        STEP_SUCCESS "FindBin模块验证通过"
+    fi
 }
 
 setup_user() {
@@ -396,15 +437,19 @@ detect_dependency() {
     local pkg_name="$2"
     local config_tool="$3"
     
+    # 优先使用pkg-config检测
+    if command -v pkg-config &>/dev/null && pkg-config --exists "$pkg_name" 2>/dev/null; then
+        echo "检测到pkg-config配置: $pkg_name"
+        return 0
+    fi
+    
+    # 其次检查config工具
+    if [[ -n "$config_tool" ]] && command -v "$config_tool" &>/dev/null; then
+        return 0
+    fi
+    
+    # 最后检查头文件
     if [[ -f "$header_path" ]]; then
-        return 0
-    fi
-    
-    if command -v pkg-config &> /dev/null && pkg-config --exists "$pkg_name"; then
-        return 0
-    fi
-    
-    if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
         return 0
     fi
     
@@ -423,11 +468,14 @@ if ! detect_dependency "/usr/include/libxml2/libxml/parser.h" "libxml-2.0" "xml2
 fi
 
 if ! detect_dependency "/usr/include/tcl.h" "tcl" "tclsh" && \
-   ! command -v tclsh &> /dev/null; then
+   ! command -v tclsh &>/dev/null; then
     CONFIGURE_OPTS+=" --without-tcl"
     echo "警告：TCL开发环境未找到，已禁用TCL扩展"
 fi
    
+    # 设置pkg-config路径
+    export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH
+    
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
     
