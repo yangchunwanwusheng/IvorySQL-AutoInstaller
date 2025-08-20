@@ -425,7 +425,7 @@ compile_install() {
     
     STEP_BEGIN "配置编译参数"
     # 基础配置选项
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-perl"
     
     # 改进的依赖检测函数
     safe_check_dep() {
