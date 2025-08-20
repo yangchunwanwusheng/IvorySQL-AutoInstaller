@@ -321,6 +321,11 @@ install_dependencies() {
         
         # EL10专用依赖
         [el10_special]="libicu libxml2 libxslt"
+        
+        # Perl相关依赖
+        [perl_base]="perl perl-devel perl-CPAN"
+        [debian_perl]="perl libperl-dev"
+        [suse_perl]="perl perl-devel"
     )
 
     case $ID in
@@ -362,6 +367,10 @@ install_dependencies() {
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} ||
             STEP_FAIL "基础依赖安装失败"
             
+            # 安装Perl相关依赖
+            STEP_BEGIN "安装Perl开发环境"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[perl_base]} || STEP_WARNING "Perl依赖安装部分失败"
+            
             if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_SUCCESS "EL10依赖安装完成"
                 STEP_INFO "此版本提供10年维护周期 (2024-2034)"
@@ -374,7 +383,12 @@ install_dependencies() {
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
             $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "基础依赖安装失败"
+            
+            # 安装Perl相关依赖
+            STEP_BEGIN "安装Perl开发环境"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_perl]} || STEP_WARNING "Perl依赖安装部分失败"
+            
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
@@ -382,6 +396,11 @@ install_dependencies() {
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
+            
+            # 安装Perl相关依赖
+            STEP_BEGIN "安装Perl开发环境"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_perl]} || STEP_WARNING "Perl依赖安装部分失败"
+            
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
@@ -414,6 +433,78 @@ setup_user() {
         STEP_SUCCESS "用户已创建: $SERVICE_USER"
     else
         STEP_SUCCESS "用户已存在: $SERVICE_USER"
+    fi
+}
+
+# 检查并安装缺失的Perl模块
+install_perl_modules() {
+    STEP_BEGIN "检测Perl环境"
+    
+    # 检查Perl解释器是否存在
+    if ! command -v perl &>/dev/null; then
+        STEP_FAIL "Perl解释器未安装，请检查依赖安装步骤"
+    fi
+    
+    # 验证Perl版本
+    PERL_VERSION=$(perl -e 'print $^V')
+    STEP_SUCCESS "检测到Perl版本: $PERL_VERSION"
+    
+    # 设置CPAN为非交互模式
+    STEP_BEGIN "配置CPAN非交互模式"
+    (echo y; echo o conf prerequisites_policy follow; echo o conf commit) | cpan >/dev/null 2>&1 || true
+    STEP_SUCCESS "CPAN配置完成"
+    
+    # 定义必需的核心Perl模块
+    declare -a REQUIRED_MODULES=(
+        "ExtUtils::Embed"     # PL/Perl必需
+        "Test::More"          # 测试框架
+        "IPC::Run"            # 进程控制
+        "File::Spec"          # 文件路径处理
+        "Data::Dumper"        # 数据结构调试
+    )
+    
+    STEP_BEGIN "检查必需Perl模块"
+    local missing_modules=()
+    
+    for module in "${REQUIRED_MODULES[@]}"; do
+        if ! perl -M$module -e "1" >/dev/null 2>&1; then
+            STEP_WARNING "模块缺失: $module"
+            missing_modules+=("$module")
+        fi
+    done
+    
+    if [ ${#missing_modules[@]} -eq 0 ]; then
+        STEP_SUCCESS "所有必需Perl模块已安装"
+        return 0
+    fi
+    
+    STEP_INFO "需要安装以下模块: ${missing_modules[*]}"
+    
+    # 安装缺失模块
+    STEP_BEGIN "通过CPAN安装缺失模块"
+    for module in "${missing_modules[@]}"; do
+        STEP_INFO "正在安装: $module"
+        if ! cpan -i "$module" >> "${LOG_DIR}/cpan_install.log" 2>&1; then
+            STEP_WARNING "$module 安装失败，请查看 ${LOG_DIR}/cpan_install.log"
+        else
+            STEP_SUCCESS "$module 安装完成"
+        fi
+    done
+    
+    # 最终验证
+    STEP_BEGIN "验证模块安装结果"
+    local still_missing=()
+    for module in "${missing_modules[@]}"; do
+        if ! perl -M$module -e "1" >/dev/null 2>&1; then
+            still_missing+=("$module")
+        fi
+    done
+    
+    if [ ${#still_missing[@]} -gt 0 ]; then
+        STEP_WARNING "以下模块仍缺失: ${still_missing[*]}"
+        STEP_INFO "建议手动安装: sudo cpan ${still_missing[*]}"
+    else
+        STEP_SUCCESS "所有必需Perl模块已成功安装"
     fi
 }
 
@@ -465,45 +556,63 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
+    # 增强的Perl模块处理
+    install_perl_modules
+    
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
 
-detect_dependency() {
-    local header_path="$1"
-    local pkg_name="$2"
-    local config_tool="$3"
-    
-    if [[ -f "$header_path" ]]; then
-        return 0
-    fi
-    
-    if command -v pkg-config &> /dev/null && pkg-config --exists "$pkg_name"; then
-        return 0
-    fi
-    
-    if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
-        return 0
-    fi
-    
-    return 1
-}
+    # 增强的依赖检测函数
+    detect_dependency() {
+        local header_path="$1"
+        local pkg_name="$2"
+        local config_tool="$3"
+        
+        # 首先检查头文件是否存在
+        if [[ -f "$header_path" ]]; then
+            return 0
+        fi
+        
+        # 尝试使用pkg-config检测
+        if command -v pkg-config &> /dev/null && pkg-config --exists "$pkg_name"; then
+            return 0
+        fi
+        
+        # 尝试使用特定配置工具检测
+        if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
+            return 0
+        fi
+        
+        return 1
+    }
 
-if ! detect_dependency "/usr/include/unicode/utypes.h" "icu-uc" && \
-   ! detect_dependency "/usr/include/icu.h" "icu-uc"; then
-    CONFIGURE_OPTS+=" --without-icu"
-    echo "警告：ICU库未找到，已禁用ICU支持"
-fi
+    # 检测ICU库
+    if detect_dependency "/usr/include/unicode/utypes.h" "icu-uc" || \
+       detect_dependency "/usr/include/icu.h" "icu-uc"; then
+        CONFIGURE_OPTS+=" --with-icu"
+        STEP_INFO "检测到ICU库，启用ICU支持"
+    else
+        CONFIGURE_OPTS+=" --without-icu"
+        STEP_WARNING "未找到ICU库，已禁用ICU支持"
+    fi
 
-if ! detect_dependency "/usr/include/libxml2/libxml/parser.h" "libxml-2.0" "xml2-config"; then
-    CONFIGURE_OPTS+=" --without-libxml"
-    echo "警告：LibXML2未找到，已禁用XML支持"
-fi
+    # 检测LibXML2
+    if detect_dependency "/usr/include/libxml2/libxml/parser.h" "libxml-2.0" "xml2-config"; then
+        CONFIGURE_OPTS+=" --with-libxml"
+        STEP_INFO "检测到LibXML2，启用XML支持"
+    else
+        CONFIGURE_OPTS+=" --without-libxml"
+        STEP_WARNING "未找到LibXML2，已禁用XML支持"
+    fi
 
-if ! detect_dependency "/usr/include/tcl.h" "tcl" "tclsh" && \
-   ! command -v tclsh &> /dev/null; then
-    CONFIGURE_OPTS+=" --without-tcl"
-    echo "警告：TCL开发环境未找到，已禁用TCL扩展"
-fi
+    # 检测TCL
+    if detect_dependency "/usr/include/tcl.h" "tcl" "tclsh" || command -v tclsh &> /dev/null; then
+        CONFIGURE_OPTS+=" --with-tcl"
+        STEP_INFO "检测到TCL，启用TCL扩展支持"
+    else
+        CONFIGURE_OPTS+=" --without-tcl"
+        STEP_WARNING "未找到TCL开发环境，已禁用TCL扩展"
+    fi
    
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
