@@ -115,7 +115,7 @@ graph TD
 **配置示例**：
 ```ini
 # IvorySQL 自动化安装配置
-INSTALL_DIR=/opt/ivorysql/ivorysql-4.5
+INSTALL_DIR=/opt/ivorysql
 DATA_DIR=/var/lib/ivorysql/data
 SERVICE_USER=ivorysql
 SERVICE_GROUP=ivorysql
@@ -277,7 +277,7 @@ export PGDATA
 4. 填写配置内容（参考以下示例）：
    ```ini
    # IvorySQL 自动化安装配置
-   INSTALL_DIR=/opt/ivorysql/ivorysql-4.5
+   INSTALL_DIR=/opt/ivorysql
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
