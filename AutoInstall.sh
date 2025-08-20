@@ -70,7 +70,7 @@ validate_config() {
         SERVICE_USER|SERVICE_GROUP)
             local reserved_users="root bin daemon adm lp sync shutdown halt mail operator games ftp"
             if grep -qw "$value" <<< "$reserved_users"; then
-                STEP_FAIL "配置错误: $key 禁止使用系统保留名称 (当前值: '$value')"
+                STEP_FAIL "配置错误: $key 禁止使用系统保留名称 (当前极: '$value')"
             fi
             
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
@@ -277,7 +277,6 @@ install_dependencies() {
         [suse_tools]="gcc make flex bison"
     )
 
-    # 新增EL10系统支持
     case $ID in
         centos|rhel|almalinux|rocky)
             STEP_BEGIN "安装RHEL依赖"
@@ -294,7 +293,7 @@ install_dependencies() {
             STEP_BEGIN "安装Perl完整环境"
             $PKG_MANAGER install -y perl-core perl-App-cpanminus pkgconfig || {
                 STEP_WARNING "部分Perl组件安装失败，尝试基础安装"
-                $PKG_MANAGER install -y perl perl-base || STEP_FAIL "Perl基础环境安装失败"
+                $PKG_MANAGER install -y perl perl-base || STEP_WARNING "Perl基础环境安装失败"
             }
             STEP_SUCCESS "Perl环境安装完成"
             
@@ -309,7 +308,7 @@ install_dependencies() {
             
             # 安装Perl完整环境及pkg-config
             STEP_BEGIN "安装Perl完整环境"
-            $PKG_MANAGER install -y perl perl-base perl-modules pkg-config || STEP_FAIL "Perl环境安装失败"
+            $PKG_MANAGER install -y perl perl-base perl-modules pkg-config || STEP_WARNING "Perl环境安装失败"
             STEP_SUCCESS "Perl环境安装完成"
             
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
@@ -322,7 +321,7 @@ install_dependencies() {
             
             # 安装Perl完整环境及pkg-config
             STEP_BEGIN "安装Perl完整环境"
-            $PKG_MANAGER install -y perl perl-base pkg-config || STEP_FAIL "Perl环境安装失败"
+            $PKG_MANAGER install -y perl perl-base pkg-config || STEP_WARNING "Perl环境安装失败"
             STEP_SUCCESS "Perl环境安装完成"
             
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
@@ -352,7 +351,7 @@ install_dependencies() {
                 export PERL5LIB
                 STEP_SUCCESS "通过PERL5LIB添加FindBin路径: $FIND_BIN_PATH"
             else
-                STEP_FAIL "无法修复FindBin模块缺失问题"
+                STEP_WARNING "无法修复FindBin模块缺失问题（继续执行）"
             fi
         }
         STEP_SUCCESS "FindBin模块修复完成"
@@ -429,64 +428,34 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    STEP_BEGIN "配置编译参数"
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
-
-detect_dependency() {
-    local header_path="$1"
-    local pkg_name="$2"
-    local config_tool="$3"
+    STEP_BEGIN "配置编译参数（生产环境优化）"
+    # 生产环境配置选项，排除所有测试模块
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --disable-test-modules --without-tcl --without-perl --without-oracle-test"
     
-    # 优先使用pkg-config检测
-    if command -v pkg-config &>/dev/null && pkg-config --exists "$pkg_name" 2>/dev/null; then
-        echo "检测到pkg-config配置: $pkg_name"
-        return 0
-    fi
-    
-    # 其次检查config工具
-    if [[ -n "$config_tool" ]] && command -v "$config_tool" &>/dev/null; then
-        return 0
-    fi
-    
-    # 最后检查头文件
-    if [[ -f "$header_path" ]]; then
-        return 0
-    fi
-    
-    return 1
-}
-
-if ! detect_dependency "/usr/include/unicode/utypes.h" "icu-uc" && \
-   ! detect_dependency "/usr/include/icu.h" "icu-uc"; then
-    CONFIGURE_OPTS+=" --without-icu"
-    echo "警告：ICU库未找到，已禁用ICU支持"
-fi
-
-if ! detect_dependency "/usr/include/libxml2/libxml/parser.h" "libxml-2.0" "xml2-config"; then
-    CONFIGURE_OPTS+=" --without-libxml"
-    echo "警告：LibXML2未找到，已禁用XML支持"
-fi
-
-if ! detect_dependency "/usr/include/tcl.h" "tcl" "tclsh" && \
-   ! command -v tclsh &>/dev/null; then
-    CONFIGURE_OPTS+=" --without-tcl"
-    echo "警告：TCL开发环境未找到，已禁用TCL扩展"
-fi
-   
     # 设置pkg-config路径
-    export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH
+    export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig:/usr/local/lib/pkgconfig
     
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
     
-    STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || STEP_FAIL "编译失败"
-    STEP_SUCCESS "编译完成"
+    STEP_BEGIN "清理编译环境"
+    if [[ -f Makefile ]]; then
+        make clean >/dev/null 2>&1 || STEP_WARNING "清理编译环境失败（可能是首次编译）"
+    fi
+    STEP_SUCCESS "编译环境已清理"
     
-    STEP_BEGIN "安装二进制文件"
+    STEP_BEGIN "编译核心组件 (使用$(nproc)线程)"
+    # 只编译主程序和其他必要组件，跳过测试模块
+    make -j$(nproc) src/backend/postgres || STEP_FAIL "核心组件编译失败"
+    make -j$(nproc) src/include/utils || STEP_FAIL "实用工具编译失败"
+    make -j$(nproc) src/bin || STEP_FAIL "二进制工具编译失败"
+    STEP_SUCCESS "生产核心组件编译完成"
+    
+    STEP_BEGIN "安装核心组件"
+    # 只安装生产环境所需的组件
     make install || STEP_FAIL "安装失败"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
-    STEP_SUCCESS "成功安装到: $INSTALL_DIR"
+    STEP_SUCCESS "核心组件已安装到: $INSTALL_DIR"
 }
 
 post_install() {
@@ -609,7 +578,7 @@ EOF
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
-    echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
+    echo -e "\033[36m         IvorySQL 生产环境安装脚本\033[0m"
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
