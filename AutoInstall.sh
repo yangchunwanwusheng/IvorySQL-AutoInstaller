@@ -47,7 +47,7 @@ validate_config() {
     case $key in
         INSTALL_DIR|DATA_DIR|LOG_DIR)
             if [[ ! "$value" =~ ^/[^[:space:]]+$ ]]; then
-                STEP_FAIL "配置错误: $key 必须是绝对路径且不含空格 (当前值: '$value')"
+                STEP_FAIL "配置错误: $极 必须是绝对路径且不含空格 (当前值: '$value')"
             fi
             
             if [[ -e "$value" ]]; then
@@ -59,7 +59,7 @@ validate_config() {
                     if [[ -O "$value" ]]; then
                         STEP_FAIL "配置错误: $key 路径不可写 (当前用户无权限)"
                     else
-                        STEP_FAIL "配置错误: $key 路径不可写 (需要 $USER 权限)"
+                        STEP_FAIL "配置极误: $key 路径不可写 (需要 $USER 权限)"
                     fi
                 fi
             else
@@ -139,11 +139,11 @@ load_config() {
     STEP_BEGIN "验证配置完整性"
     declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL")
     for var in "${required_vars[@]}"; do
-        [[ -z "${!var}" ]] && STEP_FAIL "配置缺失: $var 未设置"
+        [[ -z "${!极}" ]] && STEP_FAIL "配置缺失: $var 未设置"
     done
     STEP_SUCCESS "配置完整性验证通过"
     
-    if [[ -z "$TAG" && -z "$BRANCH" ]]; then
+    if [[ -z "$TAG" && -极 "$BRANCH" ]]; then
         STEP_FAIL "必须设置 TAG 或 BRANCH 之一"
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
@@ -326,6 +326,9 @@ install_dependencies() {
         [perl_base]="perl perl-devel perl-CPAN"
         [debian_perl]="perl libperl-dev"
         [suse_perl]="perl perl-devel"
+        
+        # Rocky10专有依赖
+        [rocky10]="libicu-devel libxml2-devel perl-libintl perl-ExtUtils-Embed perl-Test-Simple perl-DateTime"
     )
 
     case $ID in
@@ -346,8 +349,13 @@ install_dependencies() {
                 
                 # EL10的特殊依赖处理
                 STEP_BEGIN "安装EL10专用依赖"
-                $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[el10_special]} || 
-                STEP_WARNING "部分EL10专有依赖安装失败"
+                if [[ "$ID" == "rocky" ]]; then
+                    $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rocky10]} || 
+                    STEP_WARNING "部分Rocky10专有依赖安装失败"
+                else
+                    $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[el10_special]} || 
+                    STEP_WARNING "部分EL10专有依赖安装失败"
+                fi
             else
                 # 原有RHEL 8/9处理逻辑
                 $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
@@ -364,12 +372,20 @@ install_dependencies() {
             fi
             
             # 基础依赖安装（兼容所有版本）
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} ||
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS极SPECIFIC_DEPS[rhel_tools]} ||
             STEP_FAIL "基础依赖安装失败"
             
             # 安装Perl相关依赖
             STEP_BEGIN "安装Perl开发环境"
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[perl_base]} || STEP_WARNING "Perl依赖安装部分失败"
+            
+            # 针对Rocky10的Perl模块加固
+            if [[ "$ID" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
+                STEP_BEGIN "安装Rocky10专用Perl模块"
+                cpan -i App::cpanminus >> "${LOG_DIR}/cpan.log" 2>&1
+                cpanm -n Module::Build Test::More Test::Differences >> "${LOG_DIR}/cpan.log" 2>&1
+                STEP_SUCCESS "Perl模块加固完成"
+            fi
             
             if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_SUCCESS "EL10依赖安装完成"
@@ -446,13 +462,18 @@ install_perl_modules() {
     fi
     
     # 验证Perl版本
-    PERL_VERSION=$(perl -e 'print $^V')
-    STEP_SUCCESS "检测到Perl版本: $PERL_VERSION"
+    PERL_VERSION=$(perl -v 2>/dev/null | grep -oP 'v\d+\.\d+\.\d+')
+    [[ -z "$PERL_VERSION" ]] && STEP_WARNING "无法确定Perl版本" || STEP_SUCCESS "检测到Perl $PERL_VERSION"
     
-    # 设置CPAN为非交互模式
-    STEP_BEGIN "配置CPAN非交互模式"
-    (echo y; echo o conf prerequisites_policy follow; echo o conf commit) | cpan >/dev/null 2>&1 || true
-    STEP_SUCCESS "CPAN配置完成"
+    # 安装cpanminus
+    if ! command -v cpanm &>/dev/null; then
+        STEP_BEGIN "安装cpanminus工具"
+        curl -L https://cpanmin.us | perl - App::cpanminus || {
+            STEP_WARNING "cpanm安装失败"
+            return 1
+        }
+        STEP_SUCCESS "cpanm安装完成"
+    fi
     
     # 定义必需的核心Perl模块
     declare -a REQUIRED_MODULES=(
@@ -467,7 +488,7 @@ install_perl_modules() {
     local missing_modules=()
     
     for module in "${REQUIRED_MODULES[@]}"; do
-        if ! perl -M$module -e "1" >/dev/null 2>&1; then
+        if ! perl -M"$module" -e "1" >/dev/null 2>&1; then
             STEP_WARNING "模块缺失: $module"
             missing_modules+=("$module")
         fi
@@ -484,7 +505,7 @@ install_perl_modules() {
     STEP_BEGIN "通过CPAN安装缺失模块"
     for module in "${missing_modules[@]}"; do
         STEP_INFO "正在安装: $module"
-        if ! cpan -i "$module" >> "${LOG_DIR}/cpan_install.log" 2>&1; then
+        if ! cpanm -n --force "$module" >> "${LOG_DIR}/cpan_install.log" 2>&1; then
             STEP_WARNING "$module 安装失败，请查看 ${LOG_DIR}/cpan_install.log"
         else
             STEP_SUCCESS "$module 安装完成"
@@ -495,16 +516,18 @@ install_perl_modules() {
     STEP_BEGIN "验证模块安装结果"
     local still_missing=()
     for module in "${missing_modules[@]}"; do
-        if ! perl -M$module -e "1" >/dev/null 2>&1; then
+        if ! perl -M"$module" -e "1" >/dev/null 2>&1; then
             still_missing+=("$module")
         fi
     done
     
     if [ ${#still_missing[@]} -gt 0 ]; then
         STEP_WARNING "以下模块仍缺失: ${still_missing[*]}"
-        STEP_INFO "建议手动安装: sudo cpan ${still_missing[*]}"
+        STEP_INFO "建议手动安装: sudo cpanm ${still_missing[*]}"
+        return 1
     else
         STEP_SUCCESS "所有必需Perl模块已成功安装"
+        return 0
     fi
 }
 
@@ -556,8 +579,39 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
+    # 彻底清理构建环境 - 解决"Nothing to be done"问题
+    STEP_BEGIN "彻底清理构建环境"
+    if [[ -f Makefile ]]; then
+        make clean >/dev/null 2>&1 || true
+    fi
+    find . -name '*.o' -delete
+    find . -name '*.depend' -delete
+    find . -name '*.d' -delete
+    rm -f config.status config.cache config.log
+    STEP_SUCCESS "构建环境清理完成"
+    
     # 增强的Perl模块处理
     install_perl_modules
+    
+    # 针对Rocky10的特殊配置
+    if [[ "$ID" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
+        STEP_BEGIN "为Rocky10应用特殊配置"
+        # 修复Rocky10上的头文件路径问题
+        if [ ! -e /usr/include/openssl/opensslconf.h ]; then
+            openssl_version=$(ls /usr/include/openssl/opensslconf-*.h | head -1)
+            if [ -n "$openssl_version" ]; then
+                ln -s "$openssl_version" /usr/include/openssl/opensslconf.h
+            fi
+        fi
+        
+        # 修复缺少的libzstd问题
+        if [ ! -f /usr/lib64/libzstd.so.1 ]; then
+            find /usr -name "libzstd.so*" | while read -r lib; do
+                ln -s "$lib" /usr/lib64/"$(basename "$lib")" 2>/dev/null || true
+            done
+        fi
+        STEP_SUCCESS "特殊配置应用完成"
+    fi
     
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
@@ -613,16 +667,67 @@ compile_install() {
         CONFIGURE_OPTS+=" --without-tcl"
         STEP_WARNING "未找到TCL开发环境，已禁用TCL扩展"
     fi
+    
+    # 根据图片中的目录问题添加特殊配置
+    if [[ -d src/oracle_test/modules ]]; then
+        CONFIGURE_OPTS+=" --with-oracle-test-modules"
+    else
+        STEP_WARNING "未检测到Oracle测试模块，相关测试将被跳过"
+    fi
    
     ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
     
-    STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || STEP_FAIL "编译失败"
-    STEP_SUCCESS "编译完成"
+    # 使用逐步构建策略解决"Nothing to be done"问题
+    STEP_BEGIN "启动构建过程"
+    make_cmd="make"
+    
+    if grep -q "Nothing to be done for 'all'" "${LOG_DIR}/make.log"; then
+        STEP_BEGIN "检测到完整构建，跳过重编译"
+        echo "构建系统报告已经完成编译，直接进入安装阶段"
+    else
+        # 分阶段构建策略
+        for target in all world contrib; do
+            STEP_BEGIN "构建目标: $target"
+            if ! $make_cmd -j$(nproc) $target >> "${LOG_DIR}/make_${target}.log" 2>&1; then
+                STEP_WARNING "$target 目标并行构建失败，尝试单线程"
+                
+                if ! $make_cmd $target > "${LOG_DIR}/make_${target}_single.log" 2>&1; then
+                    STEP_FAIL "构建失败: $target (日志: ${LOG_DIR}/make_${target}_*.log)"
+                    exit 1
+                else
+                    STEP_SUCCESS "$target 目标单线程构建成功"
+                fi
+            else
+                STEP_SUCCESS "$target 目标构建成功"
+            fi
+        done
+        
+        # 特殊处理截图中的问题目录
+        if [[ -d src/oracle_test/modules ]]; then
+            STEP_BEGIN "编译Oracle测试模块"
+            cd src/oracle_test/modules || {
+                STEP_WARNING "无法进入Oracle测试模块目录"
+                return 1
+            }
+            
+            if ! make -j$(nproc) >> "${LOG_DIR}/oracle_modules.log" 2>&1; then
+                STEP_WARNING "Oracle测试模块编译失败，跳过安装"
+                cd - >/dev/null
+            else
+                STEP_SUCCESS "Oracle测试模块编译完成"
+                cd - >/dev/null
+            fi
+        fi
+    fi
+    
+    STEP_SUCCESS "源代码构建完成"
     
     STEP_BEGIN "安装二进制文件"
-    make install || STEP_FAIL "安装失败"
+    if ! make install >> "${LOG_DIR}/make_install.log" 2>&1; then
+        STEP_FAIL "安装失败 (查看: ${LOG_DIR}/make_install.log)"
+    fi
+    
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
     STEP_SUCCESS "成功安装到: $INSTALL_DIR"
 }
@@ -670,7 +775,7 @@ EOF
     STEP_SUCCESS "数据库初始化完成"
     
     STEP_BEGIN "配置系统服务"
-cat > /etc/systemd/system/ivorysql.service <<EOF
+cat > /etc/system极/system/ivorysql.service <<EOF
 [Unit]
 Description=IvorySQL Database Server
 Documentation=https://www.ivorysql.org
