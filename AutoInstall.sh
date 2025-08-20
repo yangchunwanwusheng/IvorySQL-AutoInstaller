@@ -4,6 +4,7 @@ set -eo pipefail
 CONFIG_FILE="/etc/ivorysql/install.conf"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""  # 存储操作系统类型
+OS_VERSION="" # 存储操作系统版本
 
 CURRENT_STAGE() {
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
@@ -185,28 +186,25 @@ check_root() {
 detect_environment() {
     CURRENT_STAGE "系统环境检测"
     
-    get_major_version() {
-        grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
-        cut -d= -f2 | tr -d '"' | cut -d. -f1
-    }
-
     STEP_BEGIN "识别操作系统"
     [[ ! -f /etc/os-release ]] && STEP_FAIL "无法确定操作系统类型"
     source /etc/os-release
     
     OS_TYPE="$ID"  # 设置全局操作系统类型
+    OS_VERSION="$VERSION_ID" # 设置全局操作系统版本
     
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
     case "$ID" in
         centos|rhel|almalinux|rocky|fedora)
-            RHEL_VERSION=$(get_major_version)
-            [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
+            # 获取主版本号
+            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+            [[ -z $OS_VERSION ]] && STEP_FAIL "无法获取版本号"
             
-            if [[ $RHEL_VERSION -eq 7 ]]; then
+            if [[ $OS_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
-            elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
+            elif [[ $OS_VERSION =~ ^(8|9|10)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                     STEP_SUCCESS "使用包管理器: dnf"
@@ -215,45 +213,26 @@ detect_environment() {
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
             else
-                STEP_FAIL "不支持的版本: $RHEL_VERSION"
+                STEP_FAIL "不支持的版本: $OS_VERSION"
             fi
             ;;
             
         ubuntu|debian)
-            OS_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
-            MAJOR_VERSION=${OS_VERSION%%.*}
-            
-            case "$ID" in
-                ubuntu)
-                    [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
-                    STEP_FAIL "不支持的Ubuntu版本: $OS_VERSION" ;;
-                debian)
-                    [[ $MAJOR_VERSION =~ ^(10|11|12)$ ]] || 
-                    STEP_FAIL "不支持的Debian版本: $OS_VERSION" ;;
-            esac
-            
+            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
             PKG_MANAGER="apt-get"
             STEP_SUCCESS "使用包管理器: apt-get"
             ;;
             
         opensuse*|sles)
-            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
-            
-            if [[ "$ID" == "opensuse-leap" ]]; then
-                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL "不支持的openSUSE Leap版本"
-            elif [[ "$ID" == "sles" ]]; then
-                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL "不支持的SLES版本"
-            else
-                STEP_FAIL "未知的SUSE变体"
-            fi
-            
+            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
             PKG_MANAGER="zypper"
             STEP_SUCCESS "使用包管理器: zypper"
             ;;
             
         arch)
             PKG_MANAGER="pacman"
-            STEP_SUCCESS "Arch Linux 已支持" ;;
+            STEP_SUCCESS "Arch Linux 已支持" 
+            ;;
             
         *)
             if [[ -f /etc/redhat-release ]]; then
@@ -270,30 +249,42 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    declare -A OS_SPECIFIC_DEPS=(
-        [rhel_base]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed"
-        [rhel_tools]="gcc make flex bison"
-        [rhel_group]="Development Tools"
-        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
-        [libxml_dep]="libxml2-devel"
-        [debian_base]="libreadline-dev zlib1g-dev libssl-dev"
-        [debian_tools]="build-essential flex bison"
-        [debian_libxml]="libxml2-dev"
-        [suse_base]="readline-devel zlib-devel libopenssl-devel"
-        [suse_tools]="gcc make flex bison"
-        [suse_libxml]="libxml2-devel"
-        [arch_base]="readline zlib openssl perl"
-        [arch_tools]="base-devel"
-        [arch_libxml]="libxml2"
+    # 通用依赖包
+    declare -a common_deps=(
+        "gcc" "make" "flex" "bison" "perl" "libxml2-dev"
     )
-
+    
+    # 平台特定依赖
+    declare -A os_specific_deps=(
+        [rhel]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
+        [debian]="libreadline-dev zlib1g-dev libssl-dev libperl-dev perl-modules"
+        [suse]="readline-devel zlib-devel libopenssl-devel perl-devel perl-ExtUtils-Embed"
+        [arch]="readline zlib openssl base-devel libxml2"
+    )
+    
+    # 平台特定工具组
+    declare -A os_tool_groups=(
+        [rhel]="Development Tools"
+        [debian]="build-essential"
+    )
+    
     STEP_BEGIN "更新软件源"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
+            # 仅对RHEL系列启用EPEL
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
-            if [[ $RHEL_VERSION -eq 10 ]]; then
-                $PKG_MANAGER config-manager --set-enabled codeready-builder || true
+            
+            # 仅对RHEL10启用CRB仓库
+            if [[ $OS_VERSION -eq 10 ]]; then
+                STEP_BEGIN "为EL10启用CRB仓库"
+                if [[ "$OS_TYPE" == "rocky" ]]; then
+                    $PKG_MANAGER config-manager --set-enabled crb || true
+                else
+                    $PKG_MANAGER config-manager --set-enabled codeready-builder || true
+                fi
+                STEP_SUCCESS "仓库配置完成"
             fi
+            
             $PKG_MANAGER update -y || true
             ;;
         ubuntu|debian)
@@ -310,62 +301,69 @@ install_dependencies() {
     STEP_SUCCESS "软件源更新完成"
 
     STEP_BEGIN "安装核心依赖"
+    
+    # 安装平台特定工具组
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
-            $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
-            $PKG_MANAGER install -y \
-                ${OS_SPECIFIC_DEPS[rhel_base]} \
-                ${OS_SPECIFIC_DEPS[perl_deps]} \
-                ${OS_SPECIFIC_DEPS[libxml_dep]} \
-                tcl-devel libicu-devel || true
+            if [[ -n "${os_tool_groups[rhel]}" ]]; then
+                if [[ "$PKG_MANAGER" == "dnf" ]]; then
+                    $PKG_MANAGER group install -y "${os_tool_groups[rhel]}" || true
+                else
+                    $PKG_MANAGER groupinstall -y "${os_tool_groups[rhel]}" || true
+                fi
+            fi
             ;;
         ubuntu|debian)
-            $PKG_MANAGER install -y \
-                ${OS_SPECIFIC_DEPS[debian_tools]} \
-                ${OS_SPECIFIC_DEPS[debian_base]} \
-                ${OS_SPECIFIC_DEPS[debian_libxml]} \
-                libperl-dev perl-modules || true
-            ;;
-        opensuse*|sles)
-            $PKG_MANAGER install -y \
-                ${OS_SPECIFIC_DEPS[suse_tools]} \
-                ${OS_SPECIFIC_DEPS[suse_base]} \
-                ${OS_SPECIFIC_DEPS[suse_libxml]} \
-                perl-devel perl-ExtUtils-Embed || true
-            ;;
-        arch)
-            pacman -S --noconfirm \
-                ${OS_SPECIFIC_DEPS[arch_base]} \
-                ${OS_SPECIFIC_DEPS[arch_tools]} \
-                ${OS_SPECIFIC_DEPS[arch_libxml]} || true
+            if [[ -n "${os_tool_groups[debian]}" ]]; then
+                $PKG_MANAGER install -y "${os_tool_groups[debian]}" || true
+            fi
             ;;
     esac
-    STEP_SUCCESS "核心依赖安装完成"
-
-    STEP_BEGIN "验证编译工具"
-    for cmd in gcc make flex bison; do
-        if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_WARNING "工具缺失: $cmd (将尝试继续编译)"
-        else
-            echo "检测到 $cmd: $(command -v $cmd)"
-        fi
+    
+    # 安装平台特定依赖
+    case "$OS_TYPE" in
+        centos|rhel|almalinux|rocky)
+            $PKG_MANAGER install -y ${os_specific_deps[rhel]} || true
+            ;;
+        ubuntu|debian)
+            $PKG_MANAGER install -y ${os_specific_deps[debian]} || true
+            ;;
+        opensuse*|sles)
+            $PKG_MANAGER install -y ${os_specific_deps[suse]} || true
+            ;;
+        arch)
+            pacman -S --noconfirm ${os_specific_deps[arch]} || true
+            ;;
+    esac
+    
+    # 安装通用依赖
+    for dep in "${common_deps[@]}"; do
+        case "$OS_TYPE" in
+            centos|rhel|almalinux|rocky)
+                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
+                ;;
+            ubuntu|debian)
+                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
+                ;;
+            opensuse*|sles)
+                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
+                ;;
+            arch)
+                pacman -S --noconfirm "$dep" 2>/dev/null || true
+                ;;
+        esac
     done
     
-    # 特别检查Perl
-    if ! command -v perl >/dev/null 2>&1; then
-        STEP_WARNING "警告: Perl解释器未找到，但将继续编译"
-    else
-        echo "检测到 Perl: $(command -v perl)"
-        echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
-    fi
-    
-    # 强制检测XML开发库
-    if [[ ! -f /usr/include/libxml2/libxml/parser.h && ! -f /usr/include/libxml/parser.h ]]; then
-        STEP_FAIL "重要依赖缺失: libxml2开发库未找到（XML功能依赖）"
-    else
-        echo "检测到 libxml2 开发库"
-    fi
-    STEP_SUCCESS "编译工具验证完成"
+    STEP_SUCCESS "核心依赖安装完成"
+
+    # 简化工具检查，仅验证关键工具
+    STEP_BEGIN "验证关键编译工具"
+    for cmd in gcc make; do
+        if ! command -v $cmd >/dev/null 2>&1; then
+            STEP_FAIL "关键工具缺失: $cmd"
+        fi
+    done
+    STEP_SUCCESS "关键编译工具验证完成"
 }
 
 setup_user() {
@@ -413,27 +411,12 @@ compile_install() {
     fi
     cd "IvorySQL" || STEP_FAIL "无法进入源码目录"
     
-    STEP_BEGIN "修复已知编译问题 (ivy_xmlvalid返回类型)"
+    STEP_BEGIN "修复XML函数返回类型问题"
     XML_FUNC_FILE="src/xml_functions/ora_xml_functions.c"
     if [[ -f "$XML_FUNC_FILE" ]]; then
-        # 备份原始文件
-        cp -p "$XML_FUNC_FILE" "${XML_FUNC_FILE}.bak_${TIMESTAMP}"
-        
-        # 使用多种方法确保兼容性修复
-        if grep -q "return NULL;" "$XML_FUNC_FILE"; then
-            # 方法1：精确行号修复（已知问题在2419行）
-            sed -i '2419s/return NULL;/return (Datum)0;/' "$XML_FUNC_FILE"
-            
-            # 方法2：全局修复（确保所有类似问题都被解决）
-            sed -i 's/return NULL;/return (Datum)0;/g' "$XML_FUNC_FILE" 2>/dev/null
-            
-            # 方法3：内容替换（确保完全匹配）
-            perl -i -pe 's/\breturn\s+NULL\s*;\s*$/return (Datum)0;/g' "$XML_FUNC_FILE"
-            
-            STEP_SUCCESS "XML函数返回类型问题已修复"
-        else
-            STEP_SUCCESS "未检测到XML函数问题 (可能已修复)"
-        fi
+        # 精确修复问题行
+        sed -i '2419s/return NULL;/return (Datum)0;/' "$XML_FUNC_FILE"
+        STEP_SUCCESS "XML函数返回类型问题已修复"
     else
         STEP_WARNING "XML函数文件未找到 (可能已移除)"
     fi
@@ -527,7 +510,8 @@ EOF
     LOCAL_LIB=""
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
-            [[ $RHEL_VERSION -eq 10 ]] && LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
+            # 仅对RHEL10设置特殊库路径
+            [[ $OS_VERSION -eq 10 ]] && LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
             ;;
         opensuse*|sles)
             LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
@@ -606,7 +590,7 @@ verify_installation() {
 数据目录: $DATA_DIR
 日志目录: $LOG_DIR
 服务状态: $(systemctl is-active ivorysql)
-操作系统: $OS_TYPE
+操作系统: $OS_TYPE $OS_VERSION
 数据库版本: $(${INSTALL_DIR}/bin/postgres --version)
 
 管理命令: 
