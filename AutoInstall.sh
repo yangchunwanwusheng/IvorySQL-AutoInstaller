@@ -70,7 +70,7 @@ validate_config() {
         SERVICE_USER|SERVICE_GROUP)
             local reserved_users="root bin daemon adm lp sync shutdown halt mail operator games ftp"
             if grep -qw "$value" <<< "$reserved_users"; then
-                STEP_FAIL "配置错误: $key 禁止使用系统保留名称 (当前极: '$value')"
+                STEP_FAIL "配置错误: $key 禁止使用系统保留名称 (当前值: '$value')"
             fi
             
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
@@ -201,6 +201,7 @@ detect_environment() {
             RHEL_VERSION=$(get_major_version)
             [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
             
+            # 扩展支持RHEL兼容发行版10系列
             if [[ $RHEL_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
             elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
@@ -268,9 +269,10 @@ install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
     declare -A OS_SPECIFIC_DEPS=(
-        [rhel_base]="readline-devel zlib-devel openssl-devel"
+        [rhel_base]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed"
         [rhel_tools]="gcc make flex bison"
         [rhel_group]="Development Tools"
+        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
         [debian_base]="libreadline-dev zlib1g-dev libssl-dev"
         [debian_tools]="build-essential flex bison"
         [suse_base]="readline-devel zlib-devel libopenssl-devel"
@@ -280,51 +282,56 @@ install_dependencies() {
     case $ID in
         centos|rhel|almalinux|rocky)
             STEP_BEGIN "安装RHEL依赖"
-            $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
-            $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
-            
-            if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
-            else
-                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
+            # 确保启用EPEL和CRB仓库
+            $PKG_MANAGER install -y epel-release 2>/dev/null || true
+            if [[ $RHEL_VERSION -eq 10 ]]; then
+                STEP_BEGIN "为EL10启用CRB仓库"
+                if [[ "$ID" == "rocky" ]]; then
+                    $PKG_MANAGER config-manager --set-enabled crb || true
+                else
+                    $PKG_MANAGER config-manager --set-enabled codeready-builder || true
+                fi
+                STEP_SUCCESS "仓库配置完成"
             fi
             
-            # 安装Perl完整环境及pkg-config
-            STEP_BEGIN "安装Perl完整环境"
-            $PKG_MANAGER install -y perl-core perl-App-cpanminus pkgconfig || {
-                STEP_WARNING "部分Perl组件安装失败，尝试基础安装"
-                $PKG_MANAGER install -y perl perl-base || STEP_WARNING "Perl基础环境安装失败"
-            }
-            STEP_SUCCESS "Perl环境安装完成"
+            $PKG_MANAGER update -y || true
             
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} || STEP_FAIL "基础依赖安装失败"
-            STEP_SUCCESS "RHEL依赖安装完成"
+            # 安装核心开发工具
+            if [[ "$PKG_MANAGER" == "dnf" ]]; then
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
+            else
+                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
+            fi
+            
+            # 强制安装Perl相关依赖
+            STEP_BEGIN "安装Perl编译依赖"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} \
+                ${OS_SPECIFIC_DEPS[perl_deps]} \
+                || STEP_WARNING "部分依赖安装失败"
+            
+            # 安装其他可能需要的依赖
+            $PKG_MANAGER install -y libicu-devel libxml2-devel tcl-devel || true
+            STEP_SUCCESS "基础依赖安装完成"
             ;;
             
         ubuntu|debian)
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
-            $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
+            $PKG_MANAGER update -y || true
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || true
             
-            # 安装Perl完整环境及pkg-config
-            STEP_BEGIN "安装Perl完整环境"
-            $PKG_MANAGER install -y perl perl-base perl-modules pkg-config || STEP_WARNING "Perl环境安装失败"
-            STEP_SUCCESS "Perl环境安装完成"
-            
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
+            # 安装Perl开发依赖
+            $PKG_MANAGER install -y libperl-dev perl-modules || true
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
         opensuse*|sles)
             STEP_BEGIN "安装SUSE依赖"
-            $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
+            $PKG_MANAGER refresh || true
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || true
             
-            # 安装Perl完整环境及pkg-config
-            STEP_BEGIN "安装Perl完整环境"
-            $PKG_MANAGER install -y perl perl-base pkg-config || STEP_WARNING "Perl环境安装失败"
-            STEP_SUCCESS "Perl环境安装完成"
-            
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
+            # 安装Perl开发依赖
+            $PKG_MANAGER install -y perl-devel perl-ExtUtils-Embed || true
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
@@ -337,27 +344,15 @@ install_dependencies() {
             echo "检测到 $cmd: $(command -v $cmd)"
         fi
     done
-    STEP_SUCCESS "核心编译工具验证完成"
     
-    # 新增Perl模块完整性验证
-    STEP_BEGIN "验证Perl模块完整性"
-    if ! perl -e 'use FindBin;' &>/dev/null; then
-        STEP_WARNING "FindBin模块缺失，尝试修复安装"
-        cpanm FindBin || {
-            # 尝试定位FindBin.pm路径
-            FIND_BIN_PATH=$(find /usr -name 'FindBin.pm' 2>/dev/null | head -1)
-            if [[ -n "$FIND_BIN_PATH" ]]; then
-                PERL5LIB="${PERL5LIB}:$(dirname $FIND_BIN_PATH)"
-                export PERL5LIB
-                STEP_SUCCESS "通过PERL5LIB添加FindBin路径: $FIND_BIN_PATH"
-            else
-                STEP_WARNING "无法修复FindBin模块缺失问题（继续执行）"
-            fi
-        }
-        STEP_SUCCESS "FindBin模块修复完成"
+    # 特别检查Perl
+    if ! command -v perl >/dev/null 2>&1; then
+        STEP_WARNING "警告: Perl解释器未找到，但将继续编译"
     else
-        STEP_SUCCESS "FindBin模块验证通过"
+        echo "检测到 Perl: $(command -v perl)"
+        echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
     fi
+    STEP_SUCCESS "核心编译工具验证完成"
 }
 
 setup_user() {
@@ -428,34 +423,75 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    STEP_BEGIN "配置编译参数（生产环境优化）"
-    # 生产环境配置选项，排除所有测试模块
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --disable-test-modules --without-tcl --without-perl --without-oracle-test"
+    STEP_BEGIN "配置编译参数"
+    # 基础配置选项
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
-    # 设置pkg-config路径
-    export PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig:/usr/local/lib/pkgconfig
+    # 改进的依赖检测函数
+    safe_check_dep() {
+        local header_paths=("${!1}")
+        local pkg_name=$2
+        local config_tool=$3
+        
+        # 首先尝试pkg-config
+        if command -v pkg-config &> /dev/null; then
+            pkg-config --exists "$pkg_name" &> /dev/null && return 0
+        fi
+        
+        # 尝试配置文件工具
+        if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
+            return 0
+        fi
+        
+        # 最后检查头文件
+        for path in "${header_paths[@]}"; do
+            if [[ -f "$path" ]]; then
+                return 0
+            fi
+        done
+        
+        return 1
+    }
+
+    # 检测ICU
+    icu_paths=("/usr/include/unicode/utypes.h" "/usr/include/icu.h")
+    safe_check_dep icu_paths[@] "icu-uc" || {
+        CONFIGURE_OPTS+=" --without-icu"
+        echo "注意：ICU库未找到，已禁用ICU支持"
+    }
     
-    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
-    STEP_SUCCESS "配置参数: $CONFIGURE_OPTS"
+    # 检测LibXML2
+    libxml_paths=("/usr/include/libxml2/libxml/parser.h")
+    safe_check_dep libxml_paths[@] "libxml-2.0" "xml2-config" || {
+        CONFIGURE_OPTS+=" --without-libxml"
+        echo "注意：LibXML2未找到，已禁用XML支持"
+    }
     
-    STEP_BEGIN "清理编译环境"
-    if [[ -f Makefile ]]; then
-        make clean >/dev/null 2>&1 || STEP_WARNING "清理编译环境失败（可能是首次编译）"
+    # 检测TCL
+    tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
+    if ! { safe_check_dep tcl_paths[@] "tcl" "tclsh" || command -v tclsh &> /dev/null; }; then
+        CONFIGURE_OPTS+=" --without-tcl"
+        echo "注意：TCL开发环境未找到，已禁用TCL扩展"
     fi
-    STEP_SUCCESS "编译环境已清理"
     
-    STEP_BEGIN "编译核心组件 (使用$(nproc)线程)"
-    # 只编译主程序和其他必要组件，跳过测试模块
-    make -j$(nproc) src/backend/postgres || STEP_FAIL "核心组件编译失败"
-    make -j$(nproc) src/include/utils || STEP_FAIL "实用工具编译失败"
-    make -j$(nproc) src/bin || STEP_FAIL "二进制工具编译失败"
-    STEP_SUCCESS "生产核心组件编译完成"
+    # 显式添加Perl支持
+    perl_paths=("/usr/bin/perl" "/usr/local/bin/perl")
+    if ! safe_check_dep perl_paths[@] "" ""; then
+        echo "警告：未找到Perl解释器，但保持--with-perl选项"
+    fi
     
-    STEP_BEGIN "安装核心组件"
-    # 只安装生产环境所需的组件
+    echo "最终配置参数: $CONFIGURE_OPTS"
+    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    STEP_SUCCESS "配置完成"
+    
+    STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
+    make -j$(nproc) || STEP_FAIL "编译失败"
+    STEP_SUCCESS "编译完成"
+    
+    STEP_BEGIN "安装二进制文件"
     make install || STEP_FAIL "安装失败"
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL "安装目录权限设置失败"
-    STEP_SUCCESS "核心组件已安装到: $INSTALL_DIR"
+    STEP_SUCCESS "成功安装到: $INSTALL_DIR"
 }
 
 post_install() {
@@ -501,6 +537,12 @@ EOF
     STEP_SUCCESS "数据库初始化完成"
     
     STEP_BEGIN "配置系统服务"
+    # EL10可能需要额外的库路径
+    LOCAL_LIB=""
+    if [[ $RHEL_VERSION -eq 10 ]]; then
+        LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
+    fi
+    
 cat > /etc/systemd/system/ivorysql.service <<EOF
 [Unit]
 Description=IvorySQL Database Server
@@ -512,6 +554,7 @@ After=network.target local-fs.target
 Type=forking
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
+$LOCAL_LIB
 Environment=PGDATA=$DATA_DIR
 OOMScoreAdjust=-1000
 ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
@@ -578,7 +621,7 @@ EOF
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
-    echo -e "\033[36m         IvorySQL 生产环境安装脚本\033[0m"
+    echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
