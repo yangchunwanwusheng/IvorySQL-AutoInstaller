@@ -22,11 +22,7 @@ STEP_FAIL() {
 }
 
 STEP_WARNING() {
-    echo -e "  \033[33m⚠ $极\033[0m"
-}
-
-STEP_INFO() {
-    echo -e "  \033[36mℹ $1\033[0m"
+    echo -e "  \033[33m⚠ $1\033[0m"
 }
 
 handle_error() {
@@ -109,7 +105,7 @@ validate_config() {
         BRANCH|TAG)
             if [[ -n "$value" ]]; then
                 if [[ "$value" =~ [\$\&\;\|\>\<\!\\\'\"] ]]; then
-                    STEP_FAIL "配置错误: $key 包含危险字符 (当前值: '$value')"
+                    STEP_FAIL "配置错误: $key 包含危险字符 (当前极: '$value')"
                 fi
                 
                 if [[ ${#value} -gt 100 ]]; then
@@ -143,7 +139,6 @@ load_config() {
     done
     STEP_SUCCESS "配置完整性验证通过"
     
-    # 修复第 146 行问题：替换错误字符 "极" 为正确的 "-z"
     if [[ -z "$TAG" && -z "$BRANCH" ]]; then
         STEP_FAIL "必须设置 TAG 或 BRANCH 之一"
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
@@ -187,7 +182,7 @@ check_root() {
 }
 
 detect_environment() {
-    CURRENT_STAGE "极环境检测"
+    CURRENT_STAGE "系统环境检测"
     
     get_major_version() {
         grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
@@ -202,51 +197,18 @@ detect_environment() {
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
     case "$ID" in
-        centos|rhel|almalinux|rocky|ol|fedora)  # 添加ol(Oracle Linux)
+        centos|rhel|almalinux|rocky|fedora)
             RHEL_VERSION=$(get_major_version)
             [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
             
-            # ==== EL10支持增强 ====
             if [[ $RHEL_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
-            elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
+            elif [[ $RHEL_VERSION =~ ^(8|9)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                 else
                     PKG_MANAGER="yum"
                     STEP_WARNING "dnf不可用，使用yum替代"
-                fi
-                
-                # EL10专用提示信息
-                if [[ $RHEL_VERSION -eq 10 ]]; then
-                    case "$ID" in
-                        rhel)    EL_TYPE="Red Hat Enterprise Linux 10" ;;
-                        rocky)   EL_TYPE="Rocky Linux 10" ;;
-                        almalinux) EL_TYPE="AlmaLinux 10" ;;
-                        ol)      EL_TYPE="Oracle Linux 10" ;;
-                        *)       EL_TYPE="RHEL 10兼容系统" ;;
-                    esac
-                    
-                    STEP_SUCCESS "检测到 EL10 版本: $EL_TYPE"
-                    
-                    # 根据图片信息添加维护主体说明
-                    case "$ID" in
-                        rocky)   STEP_INFO "维护主体: Rocky Enterprise Software Foundation" ;;
-                        almalinux) STEP_INFO "维护主体: CloudLinux" ;;
-                        ol)      STEP_INFO "维护主体: Oracle" ;;
-                    esac
-                    
-                    # 十年维护周期提示
-                    STEP_INFO "提供10年维护周期支持 (2024-2034)"
-                    
-                    # Oracle Linux内核信息
-                    if [[ "$ID" == "ol" ]]; then
-                        if uname -r | grep -q 'uek'; then
-                            STEP_INFO "内核类型: UEK (Unbreakable Enterprise Kernel)"
-                        else
-                            STEP_INFO "内核类型: RHEL兼容内核"
-                        fi
-                    fi
                 fi
                 STEP_SUCCESS "使用包管理器: $PKG_MANAGER"
             else
@@ -292,13 +254,7 @@ detect_environment() {
             
         *)
             if [[ -f /etc/redhat-release ]]; then
-                # 尝试解析redhat-release文件
-                if grep -qi "release 10" /etc/redhat-release; then
-                    PKG_MANAGER="dnf"
-                    STEP_SUCCESS "检测到RHEL兼容版10(基于/etc/redhat-release)"
-                else
-                    STEP_FAIL "未知的RHEL兼容发行版"
-                fi
+                STEP_FAIL "未知的RHEL兼容发行版"
             elif [[ -f /etc/debian_version ]]; then
                 STEP_FAIL "未知的Debian兼容发行版"
             else
@@ -319,77 +275,29 @@ install_dependencies() {
         [debian_tools]="build-essential flex bison"
         [suse_base]="readline-devel zlib-devel libopenssl-devel"
         [suse_tools]="gcc make flex bison"
-        
-        # EL10专用依赖
-        [el10_special]="libicu libxml2 libxslt"
-        
-        # Perl相关依赖
-        [perl_base]="perl perl-devel perl-CPAN"
-        [debian_perl]="perl libperl-dev"
-        [suse_perl]="perl perl-devel"
     )
 
     case $ID in
-        centos|rhel|almalinux|rocky|ol)
-            STEP_BEGIN "安装EL依赖"
+        centos|rhel|almalinux|rocky)
+            STEP_BEGIN "安装RHEL依赖"
+            $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
+            $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
             
-            # ==== EL10专用处理 ====
-            if [[ $RHEL_VERSION -eq 10 ]]; then
-                STEP_BEGIN "处理EL10系统"
-                $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
-                
-                # 仅RHEL需要EPEL
-                if [[ "$ID" == "rhel" ]]; then
-                    STEP_BEGIN "安装EPEL源"
-                    $PKG_MANAGER install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm || 
-                    STEP_WARNING "EPEL安装跳过"
-                fi
-                
-                # EL10的特殊依赖处理
-                STEP_BEGIN "安装EL10专用依赖"
-                $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[el10_special]} || 
-                STEP_WARNING "部分EL10专有依赖安装失败"
-            else
-                # 原有RHEL 8/9处理逻辑
-                $PKG_MANAGER install -y epel-release 2>/dev/null || STEP_WARNING "EPEL安装跳过"
-                $PKG_MANAGER update -y || STEP_WARNING "系统更新跳过"
-            fi
-            
-            # 统一安装开发工具链
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || 
-                STEP_WARNING "开发工具组安装部分失败"
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             else
-                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || 
-                STEP_WARNING "开发工具组安装部分失败"
+                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || STEP_WARNING "开发工具组安装部分失败"
             fi
             
-            # 基础依赖安装（兼容所有版本）
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} ||
-            STEP_FAIL "基础依赖安装失败"
-            
-            # 安装Perl相关依赖
-            STEP_BEGIN "安装Perl开发环境"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[perl_base]} || STEP_WARNING "Perl依赖安装部分失败"
-            
-            if [[ $RHEL_VERSION -eq 10 ]]; then
-                STEP_SUCCESS "EL10依赖安装完成"
-                STEP_INFO "此版本提供10年维护周期 (2024-2034)"
-            else
-                STEP_SUCCESS "RHEL依赖安装完成"
-            fi
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[rhel_base]} ${OS_SPECIFIC_DEPS[rhel_tools]} || STEP_FAIL "基础依赖安装失败"
+            STEP_SUCCESS "RHEL依赖安装完成"
             ;;
             
         ubuntu|debian)
             STEP_BEGIN "安装Debian依赖"
             export DEBIAN_FRONTEND=noninteractive
-            $PK极_MANAGER update -y || STEP_WARNING "包列表更新跳过"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "基础依赖安装失败"
-            
-            # 安装Perl相关依赖
-            STEP_BEGIN "安装Perl开发环境"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_perl]} || STEP_WARNING "Perl依赖安装部分失败"
-            
+            $PKG_MANAGER update -y || STEP_WARNING "包列表更新跳过"
+            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[debian_tools]} ${OS_SPECIFIC_DEPS[debian_base]} || STEP_FAIL "依赖安装失败"
             STEP_SUCCESS "Debian依赖安装完成"
             ;;
             
@@ -397,11 +305,6 @@ install_dependencies() {
             STEP_BEGIN "安装SUSE依赖"
             $PKG_MANAGER refresh || STEP_WARNING "软件源刷新跳过"
             $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_tools]} ${OS_SPECIFIC_DEPS[suse_base]} || STEP_FAIL "基础依赖安装失败"
-            
-            # 安装Perl相关依赖
-            STEP_BEGIN "安装Perl开发环境"
-            $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[suse_perl]} || STEP_WARNING "Perl依赖安装部分失败"
-            
             STEP_SUCCESS "SUSE依赖安装完成"
             ;;
     esac
@@ -434,78 +337,6 @@ setup_user() {
         STEP_SUCCESS "用户已创建: $SERVICE_USER"
     else
         STEP_SUCCESS "用户已存在: $SERVICE_USER"
-    fi
-}
-
-# 检查并安装缺失的Perl模块
-install_perl_modules() {
-    STEP_BEGIN "检测Perl环境"
-    
-    # 检查Perl解释器是否存在
-    if ! command -v perl &>/dev/null; then
-        STEP_FAIL "Perl解释器未安装，请检查依赖安装步骤"
-    fi
-    
-    # 验证Perl版本
-    PERL_VERSION=$(perl -e 'print $^V')
-    STEP_SUCCESS "检测到Perl版本: $PERL_VERSION"
-    
-    # 设置CPAN为非交互模式
-    STEP_BEGIN "配置CPAN非交互模式"
-    (echo y; echo o conf prerequisites_policy follow; echo o conf commit) | cpan >/dev/null 2>&1 || true
-    STEP_SUCCESS "CPAN配置完成"
-    
-    # 定义必需的核心Perl模块
-    declare -a REQUIRED_MODULES=(
-        "ExtUtils::Embed"     # PL/Perl必需
-        "Test::More"          # 测试框架
-        "IPC::Run"            # 进程控制
-        "File::Spec"          # 文件路径处理
-        "Data::Dumper"        # 数据结构调试
-    )
-    
-    STEP_BEGIN "检查必需Perl模块"
-    local missing_modules=()
-    
-    for module in "${REQUIRED_MODULES[@]}"; do
-        if ! perl -M$module -e "1" >/dev/null 2>&1; then
-            STEP_WARNING "模块缺失: $module"
-            missing_modules+=("$module")
-        fi
-    done
-    
-    if [ ${#missing_modules[@]} -eq 0 ]; then
-        STEP_SUCCESS "所有必需Perl模块已安装"
-        return 0
-    fi
-    
-    STEP_INFO "需要安装以下模块: ${missing_modules[*]}"
-    
-    # 安装缺失模块
-    STEP_BEGIN "通过CPAN安装缺失模块"
-    for module in "${missing_modules[@]}"; do
-        STEP_INFO "正在安装: $module"
-        if ! cpan -i "$module" >> "${LOG_DIR}/cpan_install.log" 2>&1; then
-            STEP_WARNING "$module 安装失败，请查看 ${LOG_DIR}/cpan_install.log"
-        else
-            STEP_SUCCESS "$module 安装完成"
-        fi
-    done
-    
-    # 最终验证
-    STEP_BEGIN "验证模块安装结果"
-    local still_missing=()
-    for module in "${missing_modules[@]}"; do
-        if ! perl -M$module -e "1" >/dev/null 2>&1; then
-            still_missing+=("$module")
-        fi
-    done
-    
-    if [ ${#still_missing[@]} -gt 0 ]; then
-        STEP_WARNING "以下模块仍缺失: ${still_missing[*]}"
-        STEP_INFO "建议手动安装: sudo cpan ${still_missing[*]}"
-    else
-        STEP_SUCCESS "所有必需Perl模块已成功安装"
     fi
 }
 
@@ -556,9 +387,6 @@ compile_install() {
         COMMIT_ID=$(git rev-parse --short HEAD)
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
-    
-    # 增强的Perl模块处理
-    install_perl_modules
     
     STEP_BEGIN "配置编译参数"
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
@@ -733,7 +561,7 @@ EOF
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
-    echo -e "\033{36m         IvorySQL 自动化安装脚本\033[0m"
+    echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
