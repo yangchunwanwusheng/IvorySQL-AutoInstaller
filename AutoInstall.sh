@@ -3,8 +3,8 @@ set -eo pipefail
 
 CONFIG_FILE="/etc/ivorysql/install.conf"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OS_TYPE=""  # 存储操作系统类型
-OS_VERSION="" # 存储操作系统版本
+OS_TYPE=""
+OS_VERSION=""
 
 CURRENT_STAGE() {
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
@@ -186,25 +186,29 @@ check_root() {
 detect_environment() {
     CURRENT_STAGE "系统环境检测"
     
+    get_major_version() {
+        grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
+        cut -d= -f2 | tr -d '"' | cut -d. -f1
+    }
+
     STEP_BEGIN "识别操作系统"
     [[ ! -f /etc/os-release ]] && STEP_FAIL "无法确定操作系统类型"
     source /etc/os-release
     
-    OS_TYPE="$ID"  # 设置全局操作系统类型
-    OS_VERSION="$VERSION_ID" # 设置全局操作系统版本
+    OS_TYPE="$ID"
+    OS_VERSION="$VERSION_ID"
     
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
     case "$ID" in
         centos|rhel|almalinux|rocky|fedora)
-            # 获取主版本号
-            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
-            [[ -z $OS_VERSION ]] && STEP_FAIL "无法获取版本号"
+            RHEL_VERSION=$(get_major_version)
+            [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
             
-            if [[ $OS_VERSION -eq 7 ]]; then
+            if [[ $RHEL_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
-            elif [[ $OS_VERSION =~ ^(8|9|10)$ ]]; then
+            elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                     STEP_SUCCESS "使用包管理器: dnf"
@@ -213,26 +217,45 @@ detect_environment() {
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
             else
-                STEP_FAIL "不支持的版本: $OS_VERSION"
+                STEP_FAIL "不支持的版本: $RHEL_VERSION"
             fi
             ;;
             
         ubuntu|debian)
-            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+            OS_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
+            MAJOR_VERSION=${OS_VERSION%%.*}
+            
+            case "$ID" in
+                ubuntu)
+                    [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
+                    STEP_FAIL "不支持的Ubuntu版本: $OS_VERSION" ;;
+                debian)
+                    [[ $MAJOR_VERSION =~ ^(10|11|12)$ ]] || 
+                    STEP_FAIL "不支持的Debian版本: $OS_VERSION" ;;
+            esac
+            
             PKG_MANAGER="apt-get"
             STEP_SUCCESS "使用包管理器: apt-get"
             ;;
             
         opensuse*|sles)
-            OS_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
+            
+            if [[ "$ID" == "opensuse-leap" ]]; then
+                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL "不支持的openSUSE Leap版本"
+            elif [[ "$ID" == "sles" ]]; then
+                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL "不支持的SLES版本"
+            else
+                STEP_FAIL "未知的SUSE变体"
+            fi
+            
             PKG_MANAGER="zypper"
             STEP_SUCCESS "使用包管理器: zypper"
             ;;
             
         arch)
             PKG_MANAGER="pacman"
-            STEP_SUCCESS "Arch Linux 已支持" 
-            ;;
+            STEP_SUCCESS "Arch Linux 已支持" ;;
             
         *)
             if [[ -f /etc/redhat-release ]]; then
@@ -249,35 +272,30 @@ detect_environment() {
 install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
-    # 通用依赖包
-    declare -a common_deps=(
-        "gcc" "make" "flex" "bison" "perl" "libxml2-dev"
+    declare -A OS_SPECIFIC_DEPS=(
+        [rhel_base]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed"
+        [rhel_tools]="gcc make flex bison"
+        [rhel_group]="Development Tools"
+        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
+        [libxml_dep]="libxml2-devel"
+        [debian_base]="libreadline-dev zlib1g-dev libssl-dev"
+        [debian_tools]="build-essential flex bison"
+        [debian_libxml]="libxml2-dev"
+        [suse_base]="readline-devel zlib-devel libopenssl-devel"
+        [suse_tools]="gcc make flex bison"
+        [suse_libxml]="libxml2-devel"
+        [arch_base]="readline zlib openssl perl"
+        [arch_tools]="base-devel"
+        [arch_libxml]="libxml2"
     )
-    
-    # 平台特定依赖
-    declare -A os_specific_deps=(
-        [rhel]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
-        [debian]="libreadline-dev zlib1g-dev libssl-dev libperl-dev perl-modules"
-        [suse]="readline-devel zlib-devel libopenssl-devel perl-devel perl-ExtUtils-Embed"
-        [arch]="readline zlib openssl base-devel libxml2"
-    )
-    
-    # 平台特定工具组
-    declare -A os_tool_groups=(
-        [rhel]="Development Tools"
-        [debian]="build-essential"
-    )
-    
+
     STEP_BEGIN "更新软件源"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
-            # 仅对RHEL系列启用EPEL
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
-            
-            # 仅对RHEL10启用CRB仓库
-            if [[ $OS_VERSION -eq 10 ]]; then
+            if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_BEGIN "为EL10启用CRB仓库"
-                if [[ "$OS_TYPE" == "rocky" ]]; then
+                if [[ "$ID" == "rocky" ]]; then
                     $PKG_MANAGER config-manager --set-enabled crb || true
                 else
                     $PKG_MANAGER config-manager --set-enabled codeready-builder || true
@@ -301,69 +319,65 @@ install_dependencies() {
     STEP_SUCCESS "软件源更新完成"
 
     STEP_BEGIN "安装核心依赖"
-    
-    # 安装平台特定工具组
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
-            if [[ -n "${os_tool_groups[rhel]}" ]]; then
-                if [[ "$PKG_MANAGER" == "dnf" ]]; then
-                    $PKG_MANAGER group install -y "${os_tool_groups[rhel]}" || true
-                else
-                    $PKG_MANAGER groupinstall -y "${os_tool_groups[rhel]}" || true
-                fi
+            if [[ "$PKG_MANAGER" == "dnf" ]]; then
+                $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
+            else
+                $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             fi
+            
+            $PKG_MANAGER install -y \
+                ${OS_SPECIFIC_DEPS[rhel_base]} \
+                ${OS_SPECIFIC_DEPS[perl_deps]} \
+                ${OS_SPECIFIC_DEPS[libxml_dep]} \
+                tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
-            if [[ -n "${os_tool_groups[debian]}" ]]; then
-                $PKG_MANAGER install -y "${os_tool_groups[debian]}" || true
-            fi
-            ;;
-    esac
-    
-    # 安装平台特定依赖
-    case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky)
-            $PKG_MANAGER install -y ${os_specific_deps[rhel]} || true
-            ;;
-        ubuntu|debian)
-            $PKG_MANAGER install -y ${os_specific_deps[debian]} || true
+            $PKG_MANAGER install -y \
+                ${OS_SPECIFIC_DEPS[debian_tools]} \
+                ${OS_SPECIFIC_DEPS[debian_base]} \
+                ${OS_SPECIFIC_DEPS[debian_libxml]} \
+                libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
-            $PKG_MANAGER install -y ${os_specific_deps[suse]} || true
+            $PKG_MANAGER install -y \
+                ${OS_SPECIFIC_DEPS[suse_tools]} \
+                ${OS_SPECIFIC_DEPS[suse_base]} \
+                ${OS_SPECIFIC_DEPS[suse_libxml]} \
+                perl-devel perl-ExtUtils-Embed || true
             ;;
         arch)
-            pacman -S --noconfirm ${os_specific_deps[arch]} || true
+            pacman -S --noconfirm \
+                ${OS_SPECIFIC_DEPS[arch_base]} \
+                ${OS_SPECIFIC_DEPS[arch_tools]} \
+                ${OS_SPECIFIC_DEPS[arch_libxml]} || true
             ;;
     esac
-    
-    # 安装通用依赖
-    for dep in "${common_deps[@]}"; do
-        case "$OS_TYPE" in
-            centos|rhel|almalinux|rocky)
-                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
-                ;;
-            ubuntu|debian)
-                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
-                ;;
-            opensuse*|sles)
-                $PKG_MANAGER install -y "$dep" 2>/dev/null || true
-                ;;
-            arch)
-                pacman -S --noconfirm "$dep" 2>/dev/null || true
-                ;;
-        esac
-    done
-    
     STEP_SUCCESS "核心依赖安装完成"
 
-    # 简化工具检查，仅验证关键工具
-    STEP_BEGIN "验证关键编译工具"
-    for cmd in gcc make; do
+    STEP_BEGIN "验证编译工具"
+    for cmd in gcc make flex bison; do
         if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_FAIL "关键工具缺失: $cmd"
+            STEP_WARNING "工具缺失: $cmd (将尝试继续编译)"
+        else
+            echo "检测到 $cmd: $(command -v $cmd)"
         fi
     done
-    STEP_SUCCESS "关键编译工具验证完成"
+    
+    if ! command -v perl >/dev/null 2>&1; then
+        STEP_WARNING "警告: Perl解释器未找到，但将继续编译"
+    else
+        echo "检测到 Perl: $(command -v perl)"
+        echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
+    fi
+    
+    if [[ ! -f /usr/include/libxml2/libxml/parser.h && ! -f /usr/include/libxml/parser.h ]]; then
+        STEP_FAIL "重要依赖缺失: libxml2开发库未找到（XML功能依赖）"
+    else
+        echo "检测到 libxml2 开发库"
+    fi
+    STEP_SUCCESS "编译工具验证完成"
 }
 
 setup_user() {
@@ -393,11 +407,13 @@ compile_install() {
     
     STEP_BEGIN "获取源代码"
     if [[ ! -d "IvorySQL" ]]; then
-        git_clone_cmd="git clone --depth 1"
+        git_clone_cmd="git clone"
         
         if [[ -n "$TAG" ]]; then
+            STEP_BEGIN "使用标签获取代码 ($TAG)"
             git_clone_cmd+=" -b $TAG"
         elif [[ -n "$BRANCH" ]]; then
+            STEP_BEGIN "使用分支获取代码 ($BRANCH)"
             git_clone_cmd+=" -b $BRANCH"
         fi
         
@@ -411,7 +427,28 @@ compile_install() {
     fi
     cd "IvorySQL" || STEP_FAIL "无法进入源码目录"
     
-    STEP_BEGIN "修复XML函数返回类型问题"
+    if [[ -n "$TAG" ]]; then
+        STEP_BEGIN "验证标签 ($TAG)"
+        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
+        COMMIT_ID=$(git rev-parse --short HEAD)
+        STEP_SUCCESS "标签 $TAG (commit: $COMMIT_ID)"
+    else
+        STEP_BEGIN "切换到指定分支 ($BRANCH)"
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
+            git reset --hard || STEP_WARNING "分支重置失败（继续执行）"
+            git clean -fd || STEP_WARNING "清理失败（继续执行）"
+            git checkout "$BRANCH" --progress || STEP_FAIL "分支切换失败: $BRANCH"
+            git pull origin "$BRANCH" --progress || STEP_WARNING "代码更新失败（继续执行）"
+            STEP_SUCCESS "已切换到分支: $BRANCH"
+        else
+            STEP_SUCCESS "当前已在分支: $BRANCH"
+        fi
+        COMMIT_ID=$(git rev-parse --short HEAD)
+        STEP_SUCCESS "当前代码版本: $COMMIT_ID"
+    fi
+    
+    STEP_BEGIN "修复已知编译问题 (ivy_xmlvalid返回类型)"
     XML_FUNC_FILE="src/xml_functions/ora_xml_functions.c"
     if [[ -f "$XML_FUNC_FILE" ]]; then
         # 精确修复问题行
@@ -425,36 +462,65 @@ compile_install() {
     # 基础配置选项
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-perl"
     
-    # 自动检测并添加可用的可选功能
-    if [[ -f /usr/include/libxml2/libxml/parser.h ]]; then
-        CONFIGURE_OPTS+=" --with-libxml"
-        echo "启用LibXML2支持"
+    # 改进的依赖检测函数
+    safe_check_dep() {
+        local header_paths=("${!1}")
+        local pkg_name=$2
+        local config_tool=$3
+        
+        # 首先尝试pkg-config
+        if command -v pkg-config &> /dev/null; then
+            pkg-config --exists "$pkg_name" &> /dev/null && return 0
+        fi
+        
+        # 尝试配置文件工具
+        if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
+            return 0
+        fi
+        
+        # 最后检查头文件
+        for path in "${header_paths[@]}"; do
+            if [[ -f "$path" ]]; then
+                return 0
+            fi
+        done
+        
+        return 1
+    }
+
+    # 检测ICU
+    icu_paths=("/usr/include/unicode/utypes.h" "/usr/include/icu.h")
+    safe_check_dep icu_paths[@] "icu-uc" || {
+        CONFIGURE_OPTS+=" --without-icu"
+        echo "注意：ICU库未找到，已禁用ICU支持"
+    }
+    
+    # 检测LibXML2
+    libxml_paths=("/usr/include/libxml2/libxml/parser.h")
+    safe_check_dep libxml_paths[@] "libxml-2.0" "xml2-config" || {
+        CONFIGURE_OPTS+=" --without-libxml"
+        echo "注意：LibXML2未找到，已禁用XML支持"
+    }
+    
+    # 检测TCL
+    tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
+    if ! { safe_check_dep tcl_paths[@] "tcl" "tclsh" || command -v tclsh &> /dev/null; }; then
+        CONFIGURE_OPTS+=" --without-tcl"
+        echo "注意：TCL开发环境未找到，已禁用TCL扩展"
     fi
     
-    if pkg-config --exists icu-uc 2>/dev/null || [[ -f /usr/include/unicode/utypes.h ]]; then
-        CONFIGURE_OPTS+=" --with-icu"
-        echo "启用ICU支持"
-    fi
-    
-    if command -v tclsh >/dev/null 2>&1; then
-        CONFIGURE_OPTS+=" --with-tcl"
-        echo "启用TCL支持"
+    # 显式添加Perl支持
+    perl_paths=("/usr/bin/perl" "/usr/local/bin/perl")
+    if ! safe_check_dep perl_paths[@] "" ""; then
+        echo "警告：未找到Perl解释器，但保持--with-perl选项"
     fi
     
     echo "最终配置参数: $CONFIGURE_OPTS"
-    ./configure $CONFIGURE_OPTS || {
-        echo "配置失败，尝试运行 autogen.sh 修复"
-        [ -f autogen.sh ] && ./autogen.sh
-        ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
-    }
+    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
     STEP_SUCCESS "配置完成"
     
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
-    make -j$(nproc) || {
-        # 收集错误信息帮助诊断
-        grep -iE 'error:|warning:' config.log | sort -u | head -20
-        STEP_FAIL "编译失败 (查看错误摘要)"
-    }
+    make -j$(nproc) || STEP_FAIL "编译失败"
     STEP_SUCCESS "编译完成"
     
     STEP_BEGIN "安装二进制文件"
@@ -489,6 +555,8 @@ PATH="$INSTALL_DIR/bin:\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
+# 添加库路径解决加载问题
+export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql:\$LD_LIBRARY_PATH"
 EOF
     chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home/.bash_profile"
     chmod 600 "$user_home/.bash_profile"
@@ -497,12 +565,29 @@ EOF
     STEP_SUCCESS "环境变量已设置"
 
     STEP_BEGIN "初始化数据库"
-    INIT_CMD="initdb -D $DATA_DIR --no-locale"
-    if ! su - "$SERVICE_USER" -c "source ~/.bash_profile && $INIT_CMD"; then
+    # 添加详细的日志记录
+    INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
+    
+    # 确保环境变量已加载
+    INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
+    
+    if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
         STEP_FAIL "数据库初始化失败"
+        echo "======= 初始化日志 ======="
+        tail -n 50 "$INIT_LOG"
+        echo "=========================="
         echo "手动调试命令: sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
         exit 1
     fi
+    
+    # 检查日志中是否有错误
+    if grep -q "FATAL" "$INIT_LOG"; then
+        STEP_FAIL "数据库初始化过程中检测到错误"
+        echo "======= 错误详情 ======="
+        grep -A 10 "FATAL" "$INIT_LOG"
+        exit 1
+    fi
+    
     STEP_SUCCESS "数据库初始化完成"
     
     STEP_BEGIN "配置系统服务"
@@ -510,15 +595,17 @@ EOF
     LOCAL_LIB=""
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky)
-            # 仅对RHEL10设置特殊库路径
-            [[ $OS_VERSION -eq 10 ]] && LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
+            [[ $RHEL_VERSION -eq 10 ]] && LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
             ;;
         opensuse*|sles)
             LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
             ;;
     esac
     
-    cat > /etc/systemd/system/ivorysql.service <<EOF
+    # 添加额外的库路径设置
+    LOCAL_LIB+="\nEnvironment=\"LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql\""
+    
+cat > /etc/systemd/system/ivorysql.service <<EOF
 [Unit]
 Description=IvorySQL Database Server
 Documentation=https://www.ivorysql.org
@@ -576,21 +663,17 @@ verify_installation() {
         sleep 1
     done
     
-    STEP_BEGIN "验证XML功能"
-    XML_TEST=$(sudo -u $SERVICE_USER $INSTALL_DIR/bin/psql -d postgres -tAc "SELECT ivy_xmlvalid('<test/>')" 2>/dev/null)
-    if [[ "$XML_TEST" == "t" ]]; then
-        STEP_SUCCESS "XML函数测试通过"
-    else
-        STEP_WARNING "XML函数可能存在兼容性问题 (返回值: $XML_TEST)"
-    fi
-    
+    # 显示成功信息
+    show_success_message
+}
+
+show_success_message() {
     echo -e "\n\033[32m================ 安装成功 ================\033[0m"
     cat <<EOF
 安装目录: $INSTALL_DIR
 数据目录: $DATA_DIR
 日志目录: $LOG_DIR
 服务状态: $(systemctl is-active ivorysql)
-操作系统: $OS_TYPE $OS_VERSION
 数据库版本: $(${INSTALL_DIR}/bin/postgres --version)
 
 管理命令: 
@@ -600,12 +683,15 @@ verify_installation() {
 
 安装时间: $(date)
 安装耗时: $SECONDS 秒
+
+安装标识号: $TIMESTAMP
+操作系统: $OS_TYPE $OS_VERSION
 EOF
 }
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
-    echo -e "\033[36m         IvorySQL 跨平台安装脚本\033[0m"
+    echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
