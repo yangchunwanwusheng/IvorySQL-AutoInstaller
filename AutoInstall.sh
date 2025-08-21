@@ -448,19 +448,9 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
-    STEP_BEGIN "修复已知编译问题 (ivy_xmlvalid返回类型)"
-    XML_FUNC_FILE="src/xml_functions/ora_xml_functions.c"
-    if [[ -f "$XML_FUNC_FILE" ]]; then
-        # 精确修复问题行
-        sed -i '2419s/return NULL;/return (Datum)0;/' "$XML_FUNC_FILE"
-        STEP_SUCCESS "XML函数返回类型问题已修复"
-    else
-        STEP_WARNING "XML函数文件未找到 (可能已移除)"
-    fi
-    
     STEP_BEGIN "配置编译参数"
     # 基础配置选项
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-perl"
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
     # 改进的依赖检测函数
     safe_check_dep() {
@@ -509,10 +499,20 @@ compile_install() {
         echo "注意：TCL开发环境未找到，已禁用TCL扩展"
     fi
     
-    # 显式添加Perl支持
-    perl_paths=("/usr/bin/perl" "/usr/local/bin/perl")
-    if ! safe_check_dep perl_paths[@] "" ""; then
-        echo "警告：未找到Perl解释器，但保持--with-perl选项"
+    # 优化Perl支持检测
+    STEP_BEGIN "检测Perl支持"
+    if command -v perl >/dev/null; then
+        perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
+        if [[ -n "$perl_header" ]]; then
+            CONFIGURE_OPTS+=" --with-perl"
+            STEP_SUCCESS "Perl开发环境完整，启用支持"
+        else
+            STEP_WARNING "Perl头文件缺失 (perl.h未找到)，禁用支持"
+            CONFIGURE_OPTS+=" --without-perl"
+        fi
+    else
+        STEP_WARNING "未检测到Perl解释器，禁用Perl支持"
+        CONFIGURE_OPTS+=" --without-perl"
     fi
     
     echo "最终配置参数: $CONFIGURE_OPTS"
@@ -555,8 +555,6 @@ PATH="$INSTALL_DIR/bin:\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
-# 添加库路径解决加载问题
-export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql:\$LD_LIBRARY_PATH"
 EOF
     chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home/.bash_profile"
     chmod 600 "$user_home/.bash_profile"
@@ -565,10 +563,7 @@ EOF
     STEP_SUCCESS "环境变量已设置"
 
     STEP_BEGIN "初始化数据库"
-    # 添加详细的日志记录
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
-    
-    # 确保环境变量已加载
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
@@ -580,7 +575,6 @@ EOF
         exit 1
     fi
     
-    # 检查日志中是否有错误
     if grep -q "FATAL" "$INIT_LOG"; then
         STEP_FAIL "数据库初始化过程中检测到错误"
         echo "======= 错误详情 ======="
@@ -591,21 +585,7 @@ EOF
     STEP_SUCCESS "数据库初始化完成"
     
     STEP_BEGIN "配置系统服务"
-    # 特殊系统兼容性处理
-    LOCAL_LIB=""
-    case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky)
-            [[ $RHEL_VERSION -eq 10 ]] && LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
-            ;;
-        opensuse*|sles)
-            LOCAL_LIB="Environment=\"LD_LIBRARY_PATH=/usr/local/lib:/usr/lib\""
-            ;;
-    esac
-    
-    # 添加额外的库路径设置
-    LOCAL_LIB+="\nEnvironment=\"LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql\""
-    
-cat > /etc/systemd/system/ivorysql.service <<EOF
+    cat > /etc/systemd/system/ivorysql.service <<EOF
 [Unit]
 Description=IvorySQL Database Server
 Documentation=https://www.ivorysql.org
@@ -616,8 +596,8 @@ After=network.target local-fs.target
 Type=forking
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
-$LOCAL_LIB
 Environment=PGDATA=$DATA_DIR
+Environment=LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql
 OOMScoreAdjust=-1000
 ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
@@ -695,7 +675,7 @@ main() {
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
-    echo "特别注意: 本脚本已修复XML函数返回类型问题"
+    echo "特别注意: 精简优化版本，移除非必要功能"
     
     check_root
     load_config
