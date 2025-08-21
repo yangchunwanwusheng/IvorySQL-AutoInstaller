@@ -5,6 +5,7 @@ CONFIG_FILE="/etc/ivorysql/install.conf"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""
 OS_VERSION=""
+XML_SUPPORT=0  # XML支持状态：0-禁用，1-启用
 
 CURRENT_STAGE() {
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
@@ -15,7 +16,7 @@ STEP_BEGIN() {
 }
 
 STEP_SUCCESS() {
-    echo -e "  \033[32m✓ $1\033[0m"
+    echo -e "  \033[32m✓ $极极"
 }
 
 STEP_FAIL() {
@@ -260,7 +261,7 @@ detect_environment() {
         *)
             if [[ -f /etc/redhat-release ]]; then
                 STEP_FAIL "未知的RHEL兼容发行版"
-            elif [[ -f /etc/debian_version ]]; then
+            elif [[ -f /极/etc/debian_version ]]; then
                 STEP_FAIL "未知的Debian兼容发行版"
             else
                 STEP_FAIL "无法识别的Linux发行版"
@@ -291,7 +292,7 @@ install_dependencies() {
 
     STEP_BEGIN "更新软件源"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky)
+        centos|rhel|almalinux|rocky|fedora)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
             if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_BEGIN "为EL10启用CRB仓库"
@@ -313,14 +314,14 @@ install_dependencies() {
             $PKG_MANAGER refresh || true
             ;;
         arch)
-            pacman -Syu --noconfirm || true
+            pacman -Syu --noconf极
             ;;
     esac
     STEP_SUCCESS "软件源更新完成"
 
     STEP_BEGIN "安装核心依赖"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky)
+        centos|rhel|almalinux|rocky|fedora)
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             else
@@ -372,10 +373,38 @@ install_dependencies() {
         echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
     fi
     
-    if [[ ! -f /usr/include/libxml2/libxml/parser.h && ! -f /usr/include/libxml/parser.h ]]; then
-        STEP_FAIL "重要依赖缺失: libxml2开发库未找到（XML功能依赖）"
+    # XML支持强化检测
+    STEP_BEGIN "检测XML支持"
+    if [[ -f /usr/include/libxml2/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
+        XML_SUPPORT=1
+        STEP_SUCCESS "XML开发库已找到，将启用XML支持"
     else
-        echo "检测到 libxml2 开发库"
+        XML_SUPPORT=0
+        STEP_WARNING "XML开发库未找到，将禁用XML支持"
+    fi
+    
+    # 确保LibXML2开发库存在
+    if [[ $XML_SUPPORT -eq 0 ]]; then
+        STEP_BEGIN "尝试安装LibXML2开发包"
+        case "$OS_TYPE" in
+            centos|rhel|almalinux|rocky)
+                $PKG_MANAGER install -y libxml2-devel || true ;;
+            ubuntu|debian)
+                $PKG_MANAGER install -y libxml2-dev || true ;;
+            opensuse*|sles)
+                $PKG_MANAGER install -y libxml2-devel || true ;;
+            arch)
+                pacman -S --noconfirm libxml2 || true ;;
+        esac
+        
+        # 重新检查
+        if [[ -f /usr/include/libxml2/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
+            XML_SUPPORT=1
+            STEP_SUCCESS "XML开发库安装成功，启用XML支持"
+        else
+            XML_SUPPORT=0
+            STEP_WARNING "XML开发库安装失败，将禁用XML支持"
+        fi
     fi
     STEP_SUCCESS "编译工具验证完成"
 }
@@ -452,63 +481,45 @@ compile_install() {
     # 基础配置选项
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
     
-    # 改进的依赖检测函数
-    safe_check_dep() {
-        local header_paths=("${!1}")
-        local pkg_name=$2
-        local config_tool=$3
-        
-        # 首先尝试pkg-config
-        if command -v pkg-config &> /dev/null; then
-            pkg-config --exists "$pkg_name" &> /dev/null && return 0
-        fi
-        
-        # 尝试配置文件工具
-        if [[ -n "$config_tool" ]] && command -v "$config_tool" &> /dev/null; then
-            return 0
-        fi
-        
-        # 最后检查头文件
-        for path in "${header_paths[@]}"; do
-            if [[ -f "$path" ]]; then
-                return 0
-            fi
-        done
-        
-        return 1
-    }
-
     # 检测ICU
     icu_paths=("/usr/include/unicode/utypes.h" "/usr/include/icu.h")
-    safe_check_dep icu_paths[@] "icu-uc" || {
+    if [[ -f "${icu_paths[0]}" || -f "${icu_paths[1]}" ]]; then
+        CONFIGURE_OPTS+=" --with-icu"
+        STEP_SUCCESS "ICU开发环境完整，启用支持"
+    else
         CONFIGURE_OPTS+=" --without-icu"
-        echo "注意：ICU库未找到，已禁用ICU支持"
-    }
+        STEP_WARNING "ICU库未找到，已禁用ICU支持"
+    fi
     
-    # 检测LibXML2
-    libxml_paths=("/usr/include/libxml2/libxml/parser.h")
-    safe_check_dep libxml_paths[@] "libxml-2.0" "xml2-config" || {
+    # XML支持配置
+    if [[ $XML_SUPPORT -eq 1 ]]; then
+        CONFIGURE_OPTS+=" --with-libxml"
+        STEP_SUCCESS "XML开发环境完整，启用支持"
+    else
         CONFIGURE_OPTS+=" --without-libxml"
-        echo "注意：LibXML2未找到，已禁用XML支持"
-    }
+        STEP_WARNING "XML开发库未找到，已禁用XML支持"
+    fi
     
     # 检测TCL
     tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
-    if ! { safe_check_dep tcl_paths[@] "tcl" "tclsh" || command -v tclsh &> /dev/null; }; then
+    if [[ -f "${tcl_paths[0]}" || -f "${tcl_paths[1]}" ]]; then
+        CONFIGURE_OPTS+=" --with-tcl"
+        STEP_SUCCESS "TCL开发环境完整，启用支持"
+    else
         CONFIGURE_OPTS+=" --without-tcl"
-        echo "注意：TCL开发环境未找到，已禁用TCL扩展"
+        STEP_WARNING "TCL开发环境未找到，已禁用TCL扩展"
     fi
     
-    # 优化Perl支持检测
-    STEP_BEGIN "检测Perl支持"
+    # 检测Perl
+    perl_paths=("/usr/bin/perl" "/usr/local/bin/perl")
     if command -v perl >/dev/null; then
         perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
         if [[ -n "$perl_header" ]]; then
             CONFIGURE_OPTS+=" --with-perl"
             STEP_SUCCESS "Perl开发环境完整，启用支持"
         else
-            STEP_WARNING "Perl头文件缺失 (perl.h未找到)，禁用支持"
             CONFIGURE_OPTS+=" --without-perl"
+            STEP_WARNING "Perl头文件缺失 (perl.h未找到)，禁用支持"
         fi
     else
         STEP_WARNING "未检测到Perl解释器，禁用Perl支持"
@@ -565,6 +576,12 @@ EOF
     STEP_BEGIN "初始化数据库"
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
+    
+    # 如果XML支持不可用，禁用相关扩展
+    if [[ $XML_SUPPORT -eq 0 ]]; then
+        INIT_CMD+=" --no-ivorysql-ora"
+        STEP_WARNING "XML支持缺失，禁用ivorysql_ora扩展"
+    fi
     
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
         STEP_FAIL "数据库初始化失败"
@@ -643,6 +660,18 @@ verify_installation() {
         sleep 1
     done
     
+    # 验证扩展是否正常工作
+    STEP_BEGIN "验证扩展功能"
+    if sudo -u $SERVICE_USER $INSTALL_DIR/bin/psql -d postgres -c "SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'" | grep -q ivorysql_ora; then
+        STEP_SUCCESS "ivorysql_ora扩展已成功加载"
+    else
+        if [[ $XML_SUPPORT -eq 0 ]]; then
+            STEP_WARNING "ivorysql_ora扩展未加载（因XML支持缺失）"
+        else
+            STEP_WARNING "ivorysql_ora扩展未能加载，请检查日志"
+        fi
+    fi
+    
     # 显示成功信息
     show_success_message
 }
@@ -667,6 +696,9 @@ show_success_message() {
 安装标识号: $TIMESTAMP
 操作系统: $OS_TYPE $OS_VERSION
 EOF
+    if [[ $XML_SUPPORT -eq 0 ]]; then
+        echo -e "\033[33m注意: XML支持未启用，部分功能受限\033[0m"
+    fi
 }
 
 main() {
@@ -675,7 +707,7 @@ main() {
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
-    echo "特别注意: 精简优化版本，移除非必要功能"
+    echo "特别注意: 包含XML支持的修复"
     
     check_root
     load_config
