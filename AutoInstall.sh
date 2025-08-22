@@ -16,7 +16,7 @@ STEP_BEGIN() {
 }
 
 STEP_SUCCESS() {
-    echo -e "  \033[32m✓ $极极"
+    echo -e "  \033[32m✓ $1\033[0m"
 }
 
 STEP_FAIL() {
@@ -77,7 +77,7 @@ validate_config() {
             fi
             
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
-                STEP_FAIL "配置错误: $key 命名无效 (当前值: '$value')"
+                STEP_FAIL "配置极: $key 命名无效 (当前值: '$value')"
                 echo "命名规则: 以字母或下划线开头，可包含字母、数字、下划线(_)和连字符(-)，长度1-32字符"
             fi
             
@@ -163,8 +163,14 @@ init_logging() {
     STEP_BEGIN "创建日志目录"
     mkdir -p "$LOG_DIR" || STEP_FAIL "无法创建日志目录 $LOG_DIR"
     
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR"
-    STEP_SUCCESS "日志目录已创建并设置权限"
+    # 只有在用户已存在的情况下才设置权限
+    if id -u "$SERVICE_USER" &>/dev/null && getent group "$SERVICE_GROUP" &>/dev/null; then
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR"
+        STEP_SUCCESS "日志目录已创建并设置权限"
+    else
+        STEP_WARNING "用户/组不存在，跳过权限设置"
+        STEP_SUCCESS "日志目录已创建"
+    fi
     
     STEP_BEGIN "重定向输出流"
     exec > >(tee -a "${LOG_DIR}/install_${TIMESTAMP}.log")
@@ -202,8 +208,15 @@ detect_environment() {
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
-    case "$ID" in
-        centos|rhel|almalinux|rocky|fedora)
+    # 专门处理Oracle Linux
+    if [[ -f /etc/oracle-release ]]; then
+        OS_TYPE="oracle"
+        ORACLE_VERSION=$(grep -oE '([0-9]+)\.?([0-9]+)?' /etc/oracle-release | head -1)
+        STEP_SUCCESS "检测到Oracle Linux $ORACLE_VERSION"
+    fi
+    
+    case "$OS_TYPE" in
+        centos|rhel|almalinux|rocky|fedora|oracle)
             RHEL_VERSION=$(get_major_version)
             [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
             
@@ -226,7 +239,7 @@ detect_environment() {
             OS_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
             MAJOR_VERSION=${OS_VERSION%%.*}
             
-            case "$ID" in
+            case "$OS_TYPE" in
                 ubuntu)
                     [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
                     STEP_FAIL "不支持的Ubuntu版本: $OS_VERSION" ;;
@@ -261,7 +274,7 @@ detect_environment() {
         *)
             if [[ -f /etc/redhat-release ]]; then
                 STEP_FAIL "未知的RHEL兼容发行版"
-            elif [[ -f /极/etc/debian_version ]]; then
+            elif [[ -f /etc/debian_version ]]; then
                 STEP_FAIL "未知的Debian兼容发行版"
             else
                 STEP_FAIL "无法识别的Linux发行版"
@@ -274,18 +287,18 @@ install_dependencies() {
     CURRENT_STAGE "安装系统依赖"
     
     declare -A OS_SPECIFIC_DEPS=(
-        [rhel_base]="readline-devel zlib-devel openssl-devel perl-ExtUtils-Embed"
+        [rhel_base]="zlib-devel openssl-devel perl-ExtUtils-Embed"
         [rhel_tools]="gcc make flex bison"
         [rhel_group]="Development Tools"
-        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel perl-IPC-Run"
+        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel"
         [libxml_dep]="libxml2-devel"
-        [debian_base]="libreadline-dev zlib1g-dev libssl-dev"
+        [debian_base]="zlib1g-dev libssl-dev"
         [debian_tools]="build-essential flex bison"
         [debian_libxml]="libxml2-dev"
-        [suse_base]="readline-devel zlib-devel libopenssl-devel"
+        [suse_base]="zlib-devel libopenssl-devel"
         [suse_tools]="gcc make flex bison"
         [suse_libxml]="libxml2-devel"
-        [arch_base]="readline zlib openssl perl"
+        [arch_base]="zlib openssl perl"
         [arch_tools]="base-devel"
         [arch_libxml]="libxml2"
     )
@@ -298,6 +311,15 @@ install_dependencies() {
                 STEP_BEGIN "为EL10启用CRB仓库"
                 if [[ "$ID" == "rocky" ]]; then
                     $PKG_MANAGER config-manager --set-enabled crb || true
+                elif [[ "$ID" == "ol" || "$ID" == "oracle" ]]; then
+                    # Oracle Linux 10特定仓库处理
+                    STEP_BEGIN "启用Oracle Linux 10开发者仓库"
+                    if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
+                        $PKG_MANAGER config-manager --enable ol10_developer || true
+                    elif $PKG_MANAGER repolist | grep -q "ol10_addons"; then
+                        $PKG_MANAGER config-manager --enable ol10_addons || true
+                    fi
+                    STEP_SUCCESS "仓库已配置"
                 else
                     $PKG_MANAGER config-manager --set-enabled codeready-builder || true
                 fi
@@ -314,19 +336,33 @@ install_dependencies() {
             $PKG_MANAGER refresh || true
             ;;
         arch)
-            pacman -Syu --noconf极
+            pacman -Syu --noconfirm
             ;;
     esac
     STEP_SUCCESS "软件源更新完成"
 
     STEP_BEGIN "安装核心依赖"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora)
+        centos|rhel|almalinux|rocky|fedora|oracle)
+            # Oracle Linux 专用设置 - 修复行57错误
+            if [[ "$OS_TYPE" == "oracle" ]]; then
+                STEP_BEGIN "安装Oracle Linux特定依赖"
+                $PKG_MANAGER install -y oraclelinux-developer-release-el${RHEL_VERSION} 2>/dev/null || true
+                $PKG_MANAGER group install -y "Development Tools" 2>/dev/null || true
+                STEP_SUCCESS "Oracle特定依赖处理完成"
+            fi
+            
+            # 通用EL依赖安装
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             else
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             fi
+            
+            # 强制安装readline-devel（必须安装）
+            STEP_BEGIN "安装readline开发包（必须）"
+            $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
+            STEP_SUCCESS "readline开发包安装成功"
             
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[rhel_base]} \
@@ -335,6 +371,11 @@ install_dependencies() {
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
+            # 强制安装libreadline-dev（必须安装）
+            STEP_BEGIN "安装libreadline-dev（必须）"
+            $PKG_MANAGER install -y libreadline-dev || STEP_FAIL "libreadline-dev安装失败，必须安装readline开发包"
+            STEP_SUCCESS "readline开发包安装成功"
+            
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[debian_tools]} \
                 ${OS_SPECIFIC_DEPS[debian_base]} \
@@ -342,13 +383,23 @@ install_dependencies() {
                 libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
+            # 强制安装readline-devel（必须安装）
+            STEP_BEGIN "安装readline-devel（必须）"
+            $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
+            STEP_SUCCESS "readline开发包安装成功"
+            
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[suse_tools]} \
                 ${OS_SPECIFIC_DEPS[suse_base]} \
-                ${OS_SPECIFIC_DEPS[suse_libxml]} \
+                ${OS_SPECIFIC_DEPS[s极libxml]} \
                 perl-devel perl-ExtUtils-Embed || true
             ;;
         arch)
+            # 强制安装readline（必须安装）
+            STEP_BEGIN "安装readline（必须）"
+            pacman -S --noconfirm readline || STEP_FAIL "readline安装失败，必须安装readline开发包"
+            STEP_SUCCESS "readline开发包安装成功"
+            
             pacman -S --noconfirm \
                 ${OS_SPECIFIC_DEPS[arch_base]} \
                 ${OS_SPECIFIC_DEPS[arch_tools]} \
@@ -356,6 +407,37 @@ install_dependencies() {
             ;;
     esac
     STEP_SUCCESS "核心依赖安装完成"
+
+    # 安装必需的 Perl 模块
+    STEP_BEGIN "安装必需的 Perl 模块"
+    case "$OS_TYPE" in
+        centos|rhel|almalinux|rocky|fedora|oracle)
+            # 安装 Perl 核心模块和开发工具
+            $PKG_MANAGER install -y perl-core perl-devel || true
+            
+            # 尝试安装 IPC-Run
+            if ! $PKG_MANAGER install -y perl-IPC-Run 2>/dev/null; then
+                STEP_WARNING "perl-IPC-Run 包不可用，尝试通过 CPAN 安装"
+                # 使用 CPAN 安装缺失的模块
+                cpan -i IPC::Run FindBin || {
+                    STEP_WARNING "CPAN 安装失败，尝试其他方法"
+                    # 如果 CPAN 不可用，尝试使用 cpanm
+                    curl -L https://cpanmin.us | perl - App::cpanminus || true
+                    cpanm IPC::Run FindBin || STEP_WARNING "Perl 模块安装可能不完整"
+                }
+            fi
+            ;;
+        ubuntu|debian)
+            $PKG_MANAGER install -y perl-modules libipc-run-perl || true
+            ;;
+        opensuse*|sles)
+            $PKG_MANAGER install -y perl-IPC-Run || true
+            ;;
+        arch)
+            pacman -S --noconfirm perl-ipc-run || true
+            ;;
+    esac
+    STEP_SUCCESS "Perl 模块安装完成"
 
     STEP_BEGIN "验证编译工具"
     for cmd in gcc make flex bison; do
@@ -387,7 +469,7 @@ install_dependencies() {
     if [[ $XML_SUPPORT -eq 0 ]]; then
         STEP_BEGIN "尝试安装LibXML2开发包"
         case "$OS_TYPE" in
-            centos|rhel|almalinux|rocky)
+            centos|rhel|almalinux|rocky|oracle)
                 $PKG_MANAGER install -y libxml2-devel || true ;;
             ubuntu|debian)
                 $PKG_MANAGER install -y libxml2-dev || true ;;
@@ -414,7 +496,11 @@ setup_user() {
     
     STEP_BEGIN "创建用户组"
     if ! getent group "$SERVICE_GROUP" &>/dev/null; then
-        groupadd "$SERVICE_GROUP" || STEP_FAIL "用户组创建失败"
+        groupadd "$SERVICE_GROUP" || {
+            # 如果标准组创建失败，尝试使用不同的方法
+            STEP_WARNING "标准组创建失败，尝试替代方法"
+            groupadd -r "$SERVICE_GROUP" || STEP_FAIL "用户组创建失败"
+        }
         STEP_SUCCESS "用户组已创建: $SERVICE_GROUP"
     else
         STEP_SUCCESS "用户组已存在: $SERVICE_GROUP"
@@ -422,11 +508,26 @@ setup_user() {
 
     STEP_BEGIN "创建用户"
     if ! id -u "$SERVICE_USER" &>/dev/null; then
-        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || STEP_FAIL "用户创建失败"
+        # 尝试多种用户创建方法以适应不同系统
+        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || 
+        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" "$SERVICE_USER" || 
+        useradd -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || 
+        STEP_FAIL "用户创建失败"
         STEP_SUCCESS "用户已创建: $SERVICE_USER"
     else
         STEP_SUCCESS "用户已存在: $SERVICE_USER"
     fi
+    
+    # 额外验证步骤
+    STEP_BEGIN "验证用户和组配置"
+    if ! id -u "$SERVICE_USER" &>/dev/null; then
+        STEP_FAIL "用户验证失败: $SERVICE_USER"
+    fi
+    
+    if ! getent group "$SERVICE_GROUP" &>/dev/null; then
+        STEP_FAIL "用户组验证失败: $SERVICE_GROUP"
+    fi
+    STEP_SUCCESS "用户和组验证成功"
 }
 
 compile_install() {
@@ -449,7 +550,17 @@ compile_install() {
         git_clone_cmd+=" --progress $REPO_URL"
         
         echo "执行命令: $git_clone_cmd"
-        $git_clone_cmd || STEP_FAIL "代码克隆失败"
+        # 添加重试机制和备用方案
+        for i in {1..3}; do
+            if $git_clone_cmd; then
+                break
+            fi
+            if [[ $i -eq 3 ]]; then
+                STEP_FAIL "代码克隆失败，请检查网络连接和仓库地址"
+            fi
+            STEP_WARNING "克隆尝试 $i/3 失败，10秒后重试..."
+            sleep 10
+        done
         STEP_SUCCESS "代码库克隆完成"
     else
         STEP_SUCCESS "发现现有代码库"
@@ -477,9 +588,42 @@ compile_install() {
         STEP_SUCCESS "当前代码版本: $COMMIT_ID"
     fi
     
+    # 验证 Perl 环境完整性
+    STEP_BEGIN "验证 Perl 环境完整性"
+    REQUIRED_PERL_MODULES=("FindBin" "IPC::Run")
+    MISSING_MODULES=()
+
+    for module in "${REQUIRED_PERL_MODULES[@]}"; do
+        if ! perl -M"$module" -e 1 2>/dev/null; then
+            MISSING_MODULES+=("$module")
+        fi
+    done
+
+    if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
+        STEP_WARNING "缺少 Perl 模块: ${MISSING_MODULES[*]}"
+        STEP_BEGIN "尝试安装缺失的 Perl 模块"
+        for module in "${MISSING_MODULES[@]}"; do
+            if command -v cpanm >/dev/null 2>&1; then
+                cpanm "$module" || STEP_WARNING "无法安装 $module"
+            else
+                cpan "$module" || STEP_WARNING "无法安装 $module"
+            fi
+        done
+        STEP_SUCCESS "Perl 模块安装尝试完成"
+    fi
+
+    # 重新检查
+    for module in "${REQUIRED_PERL_MODULES[@]}"; do
+        if ! perl -M"$module" -e 1 2>/dev/null; then
+            STEP_FAIL "必需的 Perl 模块 $module 仍然缺失，编译将失败"
+        fi
+    done
+    STEP_SUCCESS "Perl 环境验证通过"
+    
     STEP_BEGIN "配置编译参数"
-    # 基础配置选项
-    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl"
+    # 基础配置选项 - 直接启用readline（已确保安装）
+    CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-readline"
+    STEP_SUCCESS "启用readline支持"
     
     # 检测ICU
     icu_paths=("/usr/include/unicode/utypes.h" "/usr/include/icu.h")
@@ -527,7 +671,12 @@ compile_install() {
     fi
     
     echo "最终配置参数: $CONFIGURE_OPTS"
-    ./configure $CONFIGURE_OPTS || STEP_FAIL "配置失败"
+    ./configure $CONFIGURE_OPTS || {
+        STEP_FAIL "配置失败"
+        echo "配置日志:"
+        tail -20 config.log
+        exit 1
+    }
     STEP_SUCCESS "配置完成"
     
     STEP_BEGIN "编译源代码 (使用$(nproc)线程)"
@@ -707,17 +856,18 @@ main() {
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
-    echo "特别注意: 包含XML支持的修复"
+    echo "特别注意: 包含Perl模块修复和跨平台优化"
     
-    check_root
-    load_config
-    setup_user
-    init_logging
-    detect_environment
-    install_dependencies
-    compile_install
-    post_install
-    verify_installation
+    SECONDS=0
+    check_root          # 1. 检查root权限
+    load_config         # 2. 加载配置
+    detect_environment  # 3. 检测环境
+    setup_user          # 4. 创建用户和组
+    init_logging        # 5. 初始化日志
+    install_dependencies # 6. 安装依赖
+    compile_install     # 7. 编译安装
+    post_install        # 8. 安装后配置
+    verify_installation # 9. 验证安装
 }
 
 main "$@"
