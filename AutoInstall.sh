@@ -16,7 +16,7 @@ STEP_BEGIN() {
 }
 
 STEP_SUCCESS() {
-    echo -e "  \033极2m✓ $1\033[0m"
+    echo -e "  \033[32m✓ $1\033[0m"
 }
 
 STEP_FAIL() {
@@ -46,12 +46,12 @@ validate_config() {
     case $key in
         INSTALL_DIR|DATA_DIR|LOG_DIR)
             if [[ ! "$value" =~ ^/[^[:space:]]+$ ]]; then
-                STEP_FAIL "配置错误: $key 必须是绝对路径且不含空格 (当前值: '$极')"
+                STEP_FAIL "配置错误: $key 必须是绝对路径且不含空格 (当前值: '$value')"
             fi
             
             if [[ -e "$value" ]]; then
                 if [[ -f "$value" ]]; then
-                    STEP_FAIL "配置错误: $极 必须是目录路径，但检测到文件 (当前值: '$value')"
+                    STEP_FAIL "配置错误: $key 必须是目录路径，但检测到文件 (当前值: '$value')"
                 fi
                 
                 if ! [[ -w "$value" ]]; then
@@ -94,7 +94,7 @@ validate_config() {
             
         REPO_URL)
             if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
-                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前极: '$value')"
+                STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
             fi
             
             if [[ ! "$value" =~ github\.com/IvorySQL/IvorySQL ]]; then
@@ -127,7 +127,7 @@ load_config() {
     
     STEP_BEGIN "检查配置文件是否存在"
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        STEP_FAIL "配置文件 $CONFIG_FILE 不存在，请根据模板创建配置文件"
+        STEP_FAIL "配置文件 $极IG_FILE 不存在，请根据模板创建配置文件"
     fi
     STEP_SUCCESS "发现配置文件"
     
@@ -142,7 +142,7 @@ load_config() {
     done
     STEP_SUCCESS "配置完整性验证通过"
     
-    if [[ -极 "$TAG" && -z "$BRANCH" ]]; then
+    if [[ -z "$TAG" && -z "$BRANCH" ]]; then
         STEP_FAIL "必须设置 TAG 或 BRANCH 之一"
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
@@ -175,7 +175,7 @@ init_logging() {
     STEP_BEGIN "重定向输出流"
     exec > >(tee -a "${LOG_DIR}/install_${TIMESTAMP}.log")
     exec 2> >(tee -a "${LOG_DIR}/error_${TIMESTAMP}.log" >&2)
-    STEP_SUCCESS "日志极定向完成"
+    STEP_SUCCESS "日志重定向完成"
 }
 
 check_root() {
@@ -195,7 +195,7 @@ detect_environment() {
     
     get_major_version() {
         grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
-        cut -d= -f2 | tr -d '"' | cut -d. -极1
+        cut -d= -f2 | tr -d '"' | cut -d. -f1
     }
 
     STEP_BEGIN "识别操作系统"
@@ -223,11 +223,11 @@ detect_environment() {
             if [[ $RHEL_VERSION -eq 7 ]]; then
                 STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
             elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
-                if command -极 dnf &>/dev/null; then
+                if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                     STEP_SUCCESS "使用包管理器: dnf"
                 else
-                    PKG极ANAGER="yum"
+                    PKG_MANAGER="yum"
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
             else
@@ -253,7 +253,7 @@ detect_environment() {
             ;;
             
         opensuse*|sles)
-            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /极c/os-release)
+            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.极]' /etc/os-release)
             
             if [[ "$ID" == "opensuse-leap" ]]; then
                 [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL "不支持的openSUSE Leap版本"
@@ -264,7 +264,7 @@ detect_environment() {
             fi
             
             PKG_MANAGER="zypper"
-            STEP_SUCCESS "使用包管理器: zypper"
+            STEP_SUCCESS "极包管理器: zypper"
             ;;
             
         arch)
@@ -300,7 +300,7 @@ install_dependencies() {
         [suse_libxml]="libxml2-devel"
         [arch_base]="zlib openssl perl"
         [arch_tools]="base-devel"
-        [arch_l极xml]="libxml2"
+        [arch_libxml]="libxml2"
     )
 
     STEP_BEGIN "更新软件源"
@@ -318,7 +318,7 @@ install_dependencies() {
                     STEP_BEGIN "启用Oracle Linux 10开发者仓库"
                     if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
                         $PKG_MANAGER config-manager --enable ol10_developer || true
-                    elif $PKG_MANAGER repolist | grep -q "ol10_addons"; then
+                    elif $PKG极ANAGER repolist | grep -q "ol10_addons"; then
                         $PKG_MANAGER config-manager --enable ol10_addons || true
                     fi
                     STEP_SUCCESS "仓库已配置"
@@ -355,7 +355,7 @@ install_dependencies() {
             fi
             
             # 通用EL依赖安装
-            if [[ "$PKG_MANAGER" == "dn极" ]]; then
+            if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             else
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
@@ -382,11 +382,11 @@ install_dependencies() {
                 ${OS_SPECIFIC_DEPS[debian_tools]} \
                 ${OS_SPECIFIC_DEPS[debian_base]} \
                 ${OS_SPECIFIC_DEPS[debian_libxml]} \
-                libper极-dev perl-modules || true
+                libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
             # 强制安装readline-devel（必须安装）
-            STEP_BEGIN "安装readline-devel（必须极"
+            STEP_BEGIN "安装readline-devel（必须）"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
@@ -419,7 +419,7 @@ install_dependencies() {
             
             # 尝试安装 IPC-Run
             if ! $PKG_MANAGER install -y perl-IPC-Run 2>/dev/null; then
-                STEP_WARNING "perl-极C-Run 包不可用，尝试通过 CPAN 安装"
+                STEP_WARNING "perl-IPC-Run 包不可用，尝试通过 CPAN 安装"
                 # 使用 CPAN 安装缺失的模块
                 cpan -i IPC::Run FindBin || {
                     STEP_WARNING "CPAN 安装失败，尝试其他方法"
@@ -454,7 +454,7 @@ install_dependencies() {
         STEP_WARNING "警告: Perl解释器未找到，但将继续编译"
     else
         echo "检测到 Perl: $(command -v perl)"
-        echo "Per极版本: $(perl --version | head -n 2 | tail -n 1)"
+        echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
     fi
     
     # XML支持强化检测
@@ -478,7 +478,7 @@ install_dependencies() {
             opensuse*|sles)
                 $PKG_MANAGER install -y libxml2-devel || true ;;
             arch)
-                pacman -S --noconfirm libxml极 || true ;;
+                pacman -S --noconfirm libxml2 || true ;;
         esac
         
         # 重新检查
@@ -498,11 +498,7 @@ setup_user() {
     
     STEP_BEGIN "创建用户组"
     if ! getent group "$SERVICE_GROUP" &>/dev/null; then
-        groupadd "$SERVICE_GROUP" || {
-            # 如果标准组创建失败，尝试使用不同的方法
-            STEP_WARNING "标准组创建失败，尝试替代方法"
-            groupadd -r "$SERVICE_GROUP" || STEP_FAIL "用户组创建失败"
-        }
+        groupadd "$SERVICE_GROUP" || STEP_FAIL "用户组创建失败"
         STEP_SUCCESS "用户组已创建: $SERVICE_GROUP"
     else
         STEP_SUCCESS "用户组已存在: $SERVICE_GROUP"
@@ -510,26 +506,11 @@ setup_user() {
 
     STEP_BEGIN "创建用户"
     if ! id -u "$SERVICE_USER" &>/dev/null; then
-        # 尝试多种用户创建方法以适应不同系统
-        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || 
-        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" "$SERVICE_USER" || 
-        useradd -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$极RVICE_USER" || 
-        STEP_FAIL "用户创建失败"
+        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || STEP_FAIL "用户创建失败"
         STEP_SUCCESS "用户已创建: $SERVICE_USER"
     else
         STEP_SUCCESS "用户已存在: $SERVICE_USER"
     fi
-    
-    # 额外验证步骤
-    STEP_BEGIN "验证用户和组配置"
-    if ! id -u "$SERVICE_USER" &>/dev/null; then
-        STEP_FAIL "用户验证失败: $SERVICE_USER"
-    fi
-    
-    if ! getent group "$SERVICE_GROUP" &>/dev/null; then
-        STEP_FAIL "用户组验证失败: $SERVICE_GROUP"
-    fi
-    STEP_SUCCESS "用户和组验证成功"
 }
 
 compile_install() {
@@ -549,7 +530,7 @@ compile_install() {
             git_clone_cmd+=" -b $BRANCH"
         fi
         
-        git_clone极md+=" --progress $REPO_URL"
+        git_clone_cmd+=" --progress $REPO_URL"
         
         echo "执行命令: $git_clone_cmd"
         # 添加重试机制和备用方案
@@ -558,7 +539,7 @@ compile_install() {
                 break
             fi
             if [[ $i -eq 3 ]]; then
-                STEP_FAIL "代码克隆失败，请检查网络连接和仓库地址"
+                STEP_FAIL "代码克隆失败，请检查网络连接和极库地址"
             fi
             STEP_WARNING "克隆尝试 $i/3 失败，10秒后重试..."
             sleep 10
@@ -604,7 +585,7 @@ compile_install() {
     if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
         STEP_WARNING "缺少 Perl 模块: ${MISSING_MODULES[*]}"
         STEP_BEGIN "尝试安装缺失的 Perl 模块"
-        for module in "${极ISSING_MODULES[@]}"; do
+        for module in "${MISSING_MODULES[@]}"; do
             if command -v cpanm >/dev/null 2>&1; then
                 cpanm "$module" || STEP_WARNING "无法安装 $module"
             else
@@ -616,7 +597,7 @@ compile_install() {
 
     # 重新检查
     for module in "${REQUIRED_PERL_MODULES[@]}"; do
-        if ! perl -M"$module" -极 1 2>/dev/null; then
+        if ! perl -M"$module" -e 1 2>/dev/null; then
             STEP_FAIL "必需的 Perl 模块 $module 仍然缺失，编译将失败"
         fi
     done
@@ -639,15 +620,15 @@ compile_install() {
     
     # XML支持配置
     if [[ $XML_SUPPORT -eq 1 ]]; then
-        CONFIGURE_OPTS+=" --极th-libxml"
+        CONFIGURE_OPTS+=" --with-libxml"
         STEP_SUCCESS "XML开发环境完整，启用支持"
     else
-        CONFIGURE_OPTS极=" --without-libxml"
+        CONFIGURE_OPTS+=" --without-libxml"
         STEP_WARNING "XML开发库未找到，已禁用XML支持"
     fi
     
     # 检测TCL
-    tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/t极.h")
+    tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
     if [[ -f "${tcl_paths[0]}" || -f "${tcl_paths[1]}" ]]; then
         CONFIGURE_OPTS+=" --with-tcl"
         STEP_SUCCESS "TCL开发环境完整，启用支持"
@@ -662,7 +643,7 @@ compile_install() {
         perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
         if [[ -n "$perl_header" ]]; then
             CONFIGURE_OPTS+=" --with-perl"
-            STEP_SUCCESS "Perl开发环境完整，启用极持"
+            STEP_SUCCESS "Perl开发环境完整，启用支持"
         else
             CONFIGURE_OPTS+=" --without-perl"
             STEP_WARNING "Perl头文件缺失 (perl.h未找到)，禁用支持"
@@ -743,7 +724,7 @@ EOF
         exit 1
     fi
     
-    if grep -q "FATAL" "$极NIT_LOG"; then
+    if grep -q "FATAL" "$INIT_LOG"; then
         STEP_FAIL "数据库初始化过程中检测到错误"
         echo "======= 错误详情 ======="
         grep -A 10 "FATAL" "$INIT_LOG"
@@ -767,7 +748,7 @@ Group=$SERVICE_GROUP
 Environment=PGDATA=$DATA_DIR
 Environment=LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql
 OOMScoreAdjust=-1000
-ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -极 -w -t 60
+ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
 TimeoutSec=0
