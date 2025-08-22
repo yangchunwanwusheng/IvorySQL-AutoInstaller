@@ -711,9 +711,9 @@ main() {
     
     check_root
     load_config
+    setup_user
     init_logging
     detect_environment
-    setup_user
     install_dependencies
     compile_install
     post_install
