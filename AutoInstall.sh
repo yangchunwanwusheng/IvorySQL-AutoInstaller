@@ -35,7 +35,7 @@ handle_error() {
     echo "请执行以下命令排查问题:"
     echo "1. systemctl status ivorysql.service"
     echo "2. journalctl -xe"
-    echo "3. sudo -u ivorysql '${INSTALL_DIR}/bin/postgres -极 ${DATA_DIR} -c logging_collector=on -c log_directory=${LOG_DIR}'"
+    echo "3. sudo -u ivorysql '${INSTALL_DIR}/bin/postgres -D ${DATA_DIR} -c logging_collector=on -c log_directory=${LOG_DIR}'"
     exit 1
 }
 trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR
@@ -51,7 +51,7 @@ validate_config() {
             
             if [[ -e "$value" ]]; then
                 if [[ -f "$value" ]]; then
-                    STEP_FAIL "配置错误: $key 必须是目录路径，但检测到文件 (当前极: '$value')"
+                    STEP_FAIL "配置错误: $key 必须是目录路径，但检测到文件 (当前值: '$value')"
                 fi
                 
                 if ! [[ -w "$value" ]]; then
@@ -64,7 +64,7 @@ validate_config() {
             else
                 local parent_dir=$(dirname "$value")
                 mkdir -p "$parent_dir" || STEP_FAIL "无法创建父目录: $parent_dir"
-                if [[ ! -w "$parent极" ]]; then
+                if [[ ! -w "$parent_dir" ]]; then
                     STEP_FAIL "配置错误: $key 父目录不可写 (路径: '$parent_dir')"
                 fi
             fi
@@ -97,7 +97,7 @@ validate_config() {
                 STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
             fi
             
-            if [[ ! "$value极 =~ github\.com/IvorySQL/IvorySQL ]]; then
+            if [[ ! "$value" =~ github\.com/IvorySQL/IvorySQL ]]; then
                 STEP_WARNING "警告: 使用的代码库可能不是官方源 ($value)"
                 read -p "确认使用非官方源? (y/N) " -n 1 -r
                 echo
@@ -138,7 +138,7 @@ load_config() {
     STEP_BEGIN "验证配置完整性"
     declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL")
     for var in "${required_vars[@]}"; do
-        [[ -z "${!var}" ]] && STEP_FAIL "配置缺失: $var 极设置"
+        [[ -z "${!var}" ]] && STEP_FAIL "配置缺失: $var 未设置"
     done
     STEP_SUCCESS "配置完整性验证通过"
     
@@ -191,7 +191,7 @@ check_root() {
 }
 
 detect_environment() {
-    CURRENT_STAGE "极境检测"
+    CURRENT_STAGE "系统环境检测"
     
     get_major_version() {
         grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
@@ -203,7 +203,7 @@ detect_environment() {
     source /etc/os-release
     
     OS_TYPE="$ID"
-    OS_VERSION="$极ERSION_ID"
+    OS_VERSION="$VERSION_ID"
     
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
@@ -221,7 +221,7 @@ detect_environment() {
             [[ -z $RHEL_VERSION ]] && STEP_FAIL "无法获取版本号"
             
             if [[ $RHEL_VERSION -eq 7 ]]; then
-                STEP_FAIL "CentOS/R极L 7请使用官方YUM源安装"
+                STEP_FAIL "CentOS/RHEL 7请使用官方YUM源安装"
             elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
@@ -290,7 +290,7 @@ install_dependencies() {
         [rhel_base]="zlib-devel openssl-devel perl-ExtUtils-Embed"
         [rhel_tools]="gcc make flex bison"
         [rhel_group]="Development Tools"
-        [perl_deps]="per极-Test-Simple perl-Data-Dumper perl-devel"
+        [perl_deps]="perl-Test-Simple perl-Data-Dumper perl-devel"
         [libxml_dep]="libxml2-devel"
         [debian_base]="zlib1g-dev libssl-dev"
         [debian_tools]="build-essential flex bison"
@@ -299,19 +299,21 @@ install_dependencies() {
         [suse_tools]="gcc make flex bison"
         [suse_libxml]="libxml2-devel"
         [arch_base]="zlib openssl perl"
-        [arch_tools极="base-devel"
+        [arch_tools]="base-devel"
         [arch_libxml]="libxml2"
     )
 
     STEP_BEGIN "更新软件源"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora)
+        centos|rhel|almalinux|rocky|fedora|oracle)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
+            
+            # EL10系统的特殊处理
             if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_BEGIN "为EL10启用CRB仓库"
-                if [[ "$ID" == "rocky" ]]; then
+                if [[ "$OS_TYPE" == "rocky" ]]; then
                     $PKG_MANAGER config-manager --set-enabled crb || true
-                elif [[ "$ID" == "ol" || "$ID" == "oracle" ]]; then
+                elif [[ "$OS_TYPE" == "oracle" ]]; then
                     # Oracle Linux 10特定仓库处理
                     STEP_BEGIN "启用Oracle Linux 10开发者仓库"
                     if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
@@ -353,7 +355,7 @@ install_dependencies() {
             fi
             
             # 通用EL依赖安装
-            if [[ "$PKG_MANAGER" == "dn极" ]]; then
+            if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             else
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
@@ -364,18 +366,10 @@ install_dependencies() {
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
-            # 特别针对Rocky Linux 10的XML支持修复
-            if [[ "$ID" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
-                STEP_BEGIN "安装Rocky Linux 10专用XML依赖"
-                $PKG_MANAGER install -y libxml2-devel libxslt-devel || STEP_FAIL "XML开发包安装失败"
-                STEP_SUCCESS "Rocky Linux 10 XML依赖安装成功"
-            else
-                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
-            fi
-            
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[rhel_base]} \
                 ${OS_SPECIFIC_DEPS[perl_deps]} \
+                ${OS_SPECIFIC_DEPS[libxml_dep]} \
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
@@ -384,10 +378,10 @@ install_dependencies() {
             $PKG_MANAGER install -y libreadline-dev || STEP_FAIL "libreadline-dev安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
-            $PKG_MANAGER install -极 \
+            $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[debian_tools]} \
                 ${OS_SPECIFIC_DEPS[debian_base]} \
-                ${OS_SPECIFIC_DEPS[debian_l极xml]} \
+                ${OS_SPECIFIC_DEPS[debian_libxml]} \
                 libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
@@ -439,7 +433,7 @@ install_dependencies() {
             $PKG_MANAGER install -y perl-modules libipc-run-perl || true
             ;;
         opensuse*|sles)
-            $PKG_MANAGER install -y perl-极C-Run || true
+            $PKG_MANAGER install -y perl-IPC-Run || true
             ;;
         arch)
             pacman -S --noconfirm perl-ipc-run || true
@@ -470,7 +464,7 @@ install_dependencies() {
         STEP_SUCCESS "XML开发库已找到，将启用XML支持"
     else
         XML_SUPPORT=0
-        STEP_FAIL "XML开发库未找到，编译将失败"
+        STEP_WARNING "XML开发库未找到，将禁用XML支持"
     fi
     
     # 确保LibXML2开发库存在
@@ -478,26 +472,22 @@ install_dependencies() {
         STEP_BEGIN "尝试安装LibXML2开发包"
         case "$OS_TYPE" in
             centos|rhel|almalinux|rocky|oracle)
-                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
-                ;;
-            ubuntu|极bian)
-                $PKG_MANAGER install -y libxml2-dev || STEP_FAIL "libxml2-dev安装失败"
-                ;;
+                $PKG_MANAGER install -y libxml2-devel || true ;;
+            ubuntu|debian)
+                $PKG_MANAGER install -y libxml2-dev || true ;;
             opensuse*|sles)
-                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
-                ;;
+                $PKG_MANAGER install -y libxml2-devel || true ;;
             arch)
-                pacman -S --noconfirm libxml2 || STEP_FAIL "libxml2安装失败"
-                ;;
+                pacman -S --noconfirm libxml2 || true ;;
         esac
         
         # 重新检查
-        if [[ -f /usr/include/libxml极/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
+        if [[ -f /usr/include/libxml2/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
             XML_SUPPORT=1
             STEP_SUCCESS "XML开发库安装成功，启用XML支持"
         else
             XML_SUPPORT=0
-            STEP_FAIL "XML开发库安装失败，编译将失败"
+            STEP_WARNING "XML开发库安装失败，将禁用XML支持"
         fi
     fi
     STEP_SUCCESS "编译工具验证完成"
@@ -510,7 +500,7 @@ setup_user() {
     if ! getent group "$SERVICE_GROUP" &>/dev/null; then
         groupadd "$SERVICE_GROUP" || {
             # 如果标准组创建失败，尝试使用不同的方法
-            STEP_WARNING "标准极创建失败，尝试替代方法"
+            STEP_WARNING "标准组创建失败，尝试替代方法"
             groupadd -r "$SERVICE_GROUP" || STEP_FAIL "用户组创建失败"
         }
         STEP_SUCCESS "用户组已创建: $SERVICE_GROUP"
@@ -556,7 +546,7 @@ compile_install() {
             git_clone_cmd+=" -b $TAG"
         elif [[ -n "$BRANCH" ]]; then
             STEP_BEGIN "使用分支获取代码 ($BRANCH)"
-            git_clone_cmd+=" -b $BR极NCH"
+            git_clone_cmd+=" -b $BRANCH"
         fi
         
         git_clone_cmd+=" --progress $REPO_URL"
@@ -570,7 +560,7 @@ compile_install() {
             if [[ $i -eq 3 ]]; then
                 STEP_FAIL "代码克隆失败，请检查网络连接和仓库地址"
             fi
-            STEP_WARNING "克隆尝试 $极/3 失败，10秒后重试..."
+            STEP_WARNING "克隆尝试 $i/3 失败，10秒后重试..."
             sleep 10
         done
         STEP_SUCCESS "代码库克隆完成"
@@ -606,7 +596,7 @@ compile_install() {
     MISSING_MODULES=()
 
     for module in "${REQUIRED_PERL_MODULES[@]}"; do
-        if ! perl -M"$module" -e 1 2>/dev/null; then
+        if ! perl -M"$module" -e 1 2>/极dev/null; then
             MISSING_MODULES+=("$module")
         fi
     done
@@ -647,9 +637,14 @@ compile_install() {
         STEP_WARNING "ICU库未找到，已禁用ICU支持"
     fi
     
-    # XML支持配置 - 强制启用
-    CONFIGURE_OPTS+=" --with-libxml"
-    STEP_SUCCESS "启用XML支持"
+    # XML支持配置
+    if [[ $XML_SUPPORT -eq 1 ]]; then
+        CONFIGURE_OPTS+=" --with-libxml"
+        STEP_SUCCESS "XML开发环境完整，启用支持"
+    else
+        CONFIGURE_OPTS+=" --without-libxml"
+        STEP_WARNING "XML开发库未找到，已禁用XML支持"
+    fi
     
     # 检测TCL
     tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
@@ -657,7 +652,7 @@ compile_install() {
         CONFIGURE_OPTS+=" --with-tcl"
         STEP_SUCCESS "TCL开发环境完整，启用支持"
     else
-        CONFIGURE_OPTS+=" --without-t极"
+        CONFIGURE_OPTS+=" --without-tcl"
         STEP_WARNING "TCL开发环境未找到，已禁用TCL扩展"
     fi
     
@@ -716,14 +711,14 @@ post_install() {
     STEP_SUCCESS "数据目录权限设置完成"
 
     STEP_BEGIN "配置环境变量"
-    user_home=$(getent passwd "$SERVICE_USER极 | cut -d: -f6)
+    user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
     cat > "$user_home/.bash_profile" <<EOF
 PATH="$INSTALL_DIR/bin:\$PATH"
 export PATH
 PGDATA="$DATA_DIR"
 export PGDATA
 EOF
-    chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home/.bash_profile"
+    chown "$SERVICE_USER:$极SERVICE_GROUP" "$user_home/.bash_profile"
     chmod 600 "$user_home/.bash_profile"
     
     su - "$SERVICE_USER" -c "source ~/.bash_profile" || STEP_WARNING "环境变量立即生效失败（继续执行）"
@@ -733,7 +728,12 @@ EOF
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
-    # 不再禁用ivorysql_ora扩展，因为我们已经确保了XML支持
+    # 如果XML支持不可用，禁用相关扩展
+    if [[ $XML_SUPPORT -eq 0 ]]; then
+        INIT_CMD+=" --no-ivorysql-ora"
+        STEP_WARNING "XML支持缺失，禁用ivorysql_ora扩展"
+    fi
+    
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
         STEP_FAIL "数据库初始化失败"
         echo "======= 初始化日志 ======="
@@ -746,7 +746,7 @@ EOF
     if grep -q "FATAL" "$INIT_LOG"; then
         STEP_FAIL "数据库初始化过程中检测到错误"
         echo "======= 错误详情 ======="
-        grep -A 10 "FATAL" "$极IT_LOG"
+        grep -A 10 "FATAL" "$INIT_LOG"
         exit 1
     fi
     
@@ -765,9 +765,9 @@ Type=forking
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 Environment=PGDATA=$DATA_DIR
-Environment=LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgres极
+Environment=LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql
 OOMScoreAdjust=-1000
-ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -极 60
+ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
 TimeoutSec=0
@@ -797,7 +797,7 @@ verify_installation() {
     }
     STEP_SUCCESS "服务启动成功"
 
-    STEP_BEGIN "监控服务极态"
+    STEP_BEGIN "监控服务状态"
     for i in {1..15}; do
         if systemctl is-active --quiet ivorysql; then
             STEP_SUCCESS "服务运行中"
@@ -832,7 +832,7 @@ show_success_message() {
     cat <<EOF
 安装目录: $INSTALL_DIR
 数据目录: $DATA_DIR
-日志目录: $LOG极IR
+日志目录: $LOG_DIR
 服务状态: $(systemctl is-active ivorysql)
 数据库版本: $(${INSTALL_DIR}/bin/postgres --version)
 
@@ -855,10 +855,10 @@ EOF
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
     echo -e "\033[36m         IvorySQL 自动化安装脚本\033[0m"
-    echo -e "\033[36极=========================================\033[0m"
+    echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
-    echo "特别注意: 包含Rocky Linux 10优化和XML支持修复"
+    echo "特别注意: 包含EL10系统优化和跨平台支持"
     
     SECONDS=0
     check_root          # 1. 检查root权限
