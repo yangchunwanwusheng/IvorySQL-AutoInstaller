@@ -308,17 +308,37 @@ install_dependencies() {
         centos|rhel|almalinux|rocky|fedora|oracle)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
             
-            # EL10系统的特殊处理
+            # EL10系统的特殊处理 - 增强XML库安装
             if [[ $RHEL_VERSION -eq 10 ]]; then
-                STEP_BEGIN "为EL10启用CRB仓库"
+                STEP_BEGIN "为EL10启用CRB仓库并安装XML开发库"
                 if [[ "$OS_TYPE" == "rocky" ]]; then
-                    $PKG_MANAGER config-manager --set-enabled crb || true
+                    # 确保CRB仓库已启用
+                    if ! $PKG_MANAGER config-manager --set-enabled crb 2>/dev/null; then
+                        STEP_WARNING "无法启用CRB仓库，尝试使用Devel仓库"
+                        $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
+                    fi
+                    
+                    # 明确尝试安装 libxml2-devel
+                    if $PKG_MANAGER install -y libxml2-devel; then
+                        XML_SUPPORT=1
+                        STEP_SUCCESS "成功安装 libxml2-devel，启用XML支持"
+                    else
+                        # 尝试其他可能的包名
+                        STEP_BEGIN "尝试替代的XML开发包名称"
+                        if $PKG_MANAGER install -y libxml2-dev; then
+                            XML_SUPPORT=1
+                            STEP_SUCCESS "成功安装 libxml2-dev，启用XML支持"
+                        else
+                            XML_SUPPORT=0
+                            STEP_WARNING "无法安装XML开发库，XML支持将不可用"
+                        fi
+                    fi
                 elif [[ "$OS_TYPE" == "oracle" ]]; then
                     # Oracle Linux 10特定仓库处理
                     STEP_BEGIN "启用Oracle Linux 10开发者仓库"
                     if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
                         $PKG_MANAGER config-manager --enable ol10_developer || true
-                    elif $PKG极ANAGER repolist | grep -q "ol10_addons"; then
+                    elif $PKG_MANAGER repolist | grep -q "ol10_addons"; then
                         $PKG_MANAGER config-manager --enable ol10_addons || true
                     fi
                     STEP_SUCCESS "仓库已配置"
@@ -366,10 +386,20 @@ install_dependencies() {
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
+            # 特别处理：确保XML开发库已安装（针对非EL10系统或EL10中未在上面安装的情况）
+            if [[ $XML_SUPPORT -eq 0 && $RHEL_VERSION -ne 10 ]]; then
+                STEP_BEGIN "安装XML开发库"
+                if $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[libxml_dep]}; then
+                    XML_SUPPORT=1
+                    STEP_SUCCESS "XML开发库安装成功"
+                else
+                    STEP_WARNING "XML开发库安装失败，XML支持将不可用"
+                fi
+            fi
+            
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[rhel_base]} \
                 ${OS_SPECIFIC_DEPS[perl_deps]} \
-                ${OS_SPECIFIC_DEPS[libxml_dep]} \
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
@@ -433,7 +463,7 @@ install_dependencies() {
             $PKG_MANAGER install -y perl-modules libipc-run-perl || true
             ;;
         opensuse*|sles)
-            $PKG_MANAGER install -y perl-IPC-Run || true
+            $PKG极ANAGER install -y perl-IPC-Run || true
             ;;
         arch)
             pacman -S --noconfirm perl-ipc-run || true
@@ -467,18 +497,50 @@ install_dependencies() {
         STEP_WARNING "XML开发库未找到，将禁用XML支持"
     fi
     
-    # 确保LibXML2开发库存在
+    # 确保LibXML2开发库存在 - 特别针对Rocky Linux 10
     if [[ $XML_SUPPORT -eq 0 ]]; then
         STEP_BEGIN "尝试安装LibXML2开发包"
         case "$OS_TYPE" in
             centos|rhel|almalinux|rocky|oracle)
-                $PKG_MANAGER install -y libxml2-devel || true ;;
+                # 对于Rocky Linux 10，使用更积极的安装方法
+                if [[ "$OS_TYPE" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
+                    STEP_BEGIN "为Rocky Linux 10尝试多种方式安装libxml2-devel"
+                    # 方法1: 尝试启用CRB仓库并安装
+                    $PKG_MANAGER config-manager --set-enabled crb 2>/dev/null || true
+                    if $PKG_MANAGER install -y libxml2-devel; then
+                        XML_SUPPORT=1
+                        STEP_SUCCESS "通过CRB仓库成功安装libxml2-devel"
+                    else
+                        # 方法2: 尝试启用Devel仓库
+                        $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
+                        if $PKG_MANAGER install -y libxml2-devel; then
+                            XML_SUPPORT=1
+                            STEP_SUCCESS "通过Devel仓库成功安装libxml2-devel"
+                        else
+                            # 方法3: 尝试使用dnf的--allowerasing选项
+                            if $PKG_MANAGER install -y --allowerasing libxml2-devel; then
+                                XML_SUPPORT=1
+                                STEP_SUCCESS "使用--allowerasing选项成功安装libxml2-devel"
+                            else
+                                XML_SUPPORT=0
+                                STEP_WARNING "所有安装libxml2-devel的方法都失败了"
+                            fi
+                        fi
+                    fi
+                else
+                    # 对于其他系统，使用常规方法
+                    $PKG_MANAGER install -y libxml2-devel || true
+                fi
+                ;;
             ubuntu|debian)
-                $PKG_MANAGER install -y libxml2-dev || true ;;
+                $PKG_MANAGER install -y libxml2-dev || true
+                ;;
             opensuse*|sles)
-                $PKG_MANAGER install -y libxml2-devel || true ;;
+                $PKG_MANAGER install -y libxml2-devel || true
+                ;;
             arch)
-                pacman -S --noconfirm libxml2 || true ;;
+                pacman -S --noconfirm libxml2 || true
+                ;;
         esac
         
         # 重新检查
