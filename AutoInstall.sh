@@ -49,14 +49,14 @@ validate_config() {
                 STEP_FAIL "配置错误: $key 必须是绝对路径且不含空格 (当前值: '$value')"
             fi
             
-            if [[ -e "$value" ]]; then
+            if [[ -e "$极" ]]; then
                 if [[ -f "$value" ]]; then
                     STEP_FAIL "配置错误: $key 必须是目录路径，但检测到文件 (当前值: '$value')"
                 fi
                 
                 if ! [[ -w "$value" ]]; then
                     if [[ -O "$value" ]]; then
-                        STEP_FAIL "配置错误: $key 路径不可写 (当前用户无权限)"
+                        STEP_FAIL "极置错误: $key 路径不可写 (当前用户无权限)"
                     else
                         STEP_FAIL "配置错误: $key 路径不可写 (需要 $USER 权限)"
                     fi
@@ -77,7 +77,7 @@ validate_config() {
             fi
             
             if [[ ! "$value" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
-                STEP_FAIL "配置极: $key 命名无效 (当前值: '$value')"
+                STEP_FAIL "配置错误: $key 命名无效 (当前值: '$value')"
                 echo "命名规则: 以字母或下划线开头，可包含字母、数字、下划线(_)和连字符(-)，长度1-32字符"
             fi
             
@@ -93,7 +93,7 @@ validate_config() {
             ;;
             
         REPO_URL)
-            if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
+            if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+极 ]]; then
                 STEP_FAIL "配置错误: REPO_URL 格式无效 (当前值: '$value')"
             fi
             
@@ -108,11 +108,11 @@ validate_config() {
         BRANCH|TAG)
             if [[ -n "$value" ]]; then
                 if [[ "$value" =~ [\$\&\;\|\>\<\!\\\'\"] ]]; then
-                    STEP_FAIL "配置错误: $key 包含危险字符 (当前值: '$value')"
+                    STEP_FAIL "配置错误: $key 包含危险字符 (当前值: '$极')"
                 fi
                 
                 if [[ ${#value} -gt 100 ]]; then
-                    STEP_WARNING "警告: $key 长度超过100字符 (当前值: '$value')"
+                    STEP_WARNING "警告: $极 长度超过100字符 (当前值: '$value')"
                     read -p "确认使用超长标识? (y/N) " -n 1 -r
                     echo
                     [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL "安装中止：用户拒绝超长标识"
@@ -131,18 +131,18 @@ load_config() {
     fi
     STEP_SUCCESS "发现配置文件"
     
-    STEP_BEGIN "加载配置文件"
+    STEP极EGIN "加载配置文件"
     source "$CONFIG_FILE" || STEP_FAIL "无法加载配置文件 $CONFIG_FILE"
     STEP_SUCCESS "配置文件加载成功"
     
     STEP_BEGIN "验证配置完整性"
-    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL")
+    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER极"SERVICE_GROUP" "REPO_URL")
     for var in "${required_vars[@]}"; do
         [[ -z "${!var}" ]] && STEP_FAIL "配置缺失: $var 未设置"
     done
     STEP_SUCCESS "配置完整性验证通过"
     
-    if [[ -z "$TAG" && -z "$BRANCH" ]]; then
+    if [[ -极 "$TAG" && -z "$BRANCH" ]]; then
         STEP_FAIL "必须设置 TAG 或 BRANCH 之一"
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
         STEP_WARNING "同时设置了 TAG 和 BRANCH，将优先使用 TAG($TAG)"
@@ -181,10 +181,10 @@ init_logging() {
 check_root() {
     CURRENT_STAGE "权限检查"
     
-    STEP_BEGIN "验证用户权限"
+    STEP_BEGIN "验证用户极限"
     [[ "$(id -u)" -ne 0 ]] && { 
         STEP_FAIL "必须使用root权限运行此脚本"
-        echo -e "请使用：\033[33msudo $0 $@\033[0m" >&2
+        echo -e "请使用：\033[33msudo $0 $@\033[极" >&2
         exit 1
     }
     STEP_SUCCESS "root权限验证通过"
@@ -227,7 +227,7 @@ detect_environment() {
                     PKG_MANAGER="dnf"
                     STEP_SUCCESS "使用包管理器: dnf"
                 else
-                    PKG_MANAGER="yum"
+                    PKG_MANAGER="y极"
                     STEP_WARNING "dnf不可用，使用yum替代"
                 fi
             else
@@ -248,14 +248,14 @@ detect_environment() {
                     STEP_FAIL "不支持的Debian版本: $OS_VERSION" ;;
             esac
             
-            PKG_MANAGER="apt-get"
+            PKG_MANAG极R="apt-get"
             STEP_SUCCESS "使用包管理器: apt-get"
             ;;
             
         opensuse*|sles)
             SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
             
-            if [[ "$ID" == "opensuse-leap" ]]; then
+            if [[ "$ID" == "opens极se-leap" ]]; then
                 [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL "不支持的openSUSE Leap版本"
             elif [[ "$ID" == "sles" ]]; then
                 [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL "不支持的SLES版本"
@@ -344,7 +344,7 @@ install_dependencies() {
     STEP_BEGIN "安装核心依赖"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky|fedora|oracle)
-            # Oracle Linux 专用设置 - 修复行57错误
+            # Oracle Linux 专用设置
             if [[ "$OS_TYPE" == "oracle" ]]; then
                 STEP_BEGIN "安装Oracle Linux特定依赖"
                 $PKG_MANAGER install -y oraclelinux-developer-release-el${RHEL_VERSION} 2>/dev/null || true
@@ -364,10 +364,18 @@ install_dependencies() {
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
+            # 特别针对Rocky Linux 10的XML支持修复
+            if [[ "$ID" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
+                STEP_BEGIN "安装Rocky Linux 10专用XML依赖"
+                $PKG_MANAGER install -y libxml2-devel libxslt-devel || STEP_FAIL "XML开发包安装失败"
+                STEP_SUCCESS "Rocky Linux 10 XML依赖安装成功"
+            else
+                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
+            fi
+            
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[rhel_base]} \
                 ${OS_SPECIFIC_DEPS[perl_deps]} \
-                ${OS_SPECIFIC_DEPS[libxml_dep]} \
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
@@ -384,14 +392,14 @@ install_dependencies() {
             ;;
         opensuse*|sles)
             # 强制安装readline-devel（必须安装）
-            STEP_BEGIN "安装readline-devel（必须）"
+            STEP_BEGIN "安装readline-devel（必须极"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[suse_tools]} \
                 ${OS_SPECIFIC_DEPS[suse_base]} \
-                ${OS_SPECIFIC_DEPS[s极libxml]} \
+                ${OS_SPECIFIC_DEPS[suse_libxml]} \
                 perl-devel perl-ExtUtils-Embed || true
             ;;
         arch)
@@ -451,7 +459,7 @@ install_dependencies() {
     if ! command -v perl >/dev/null 2>&1; then
         STEP_WARNING "警告: Perl解释器未找到，但将继续编译"
     else
-        echo "检测到 Perl: $(command -v perl)"
+        echo "检测到 Perl: $(command -极 perl)"
         echo "Perl版本: $(perl --version | head -n 2 | tail -n 1)"
     fi
     
@@ -462,7 +470,7 @@ install_dependencies() {
         STEP_SUCCESS "XML开发库已找到，将启用XML支持"
     else
         XML_SUPPORT=0
-        STEP_WARNING "XML开发库未找到，将禁用XML支持"
+        STEP_FAIL "XML开发库未找到，编译将失败"
     fi
     
     # 确保LibXML2开发库存在
@@ -470,13 +478,17 @@ install_dependencies() {
         STEP_BEGIN "尝试安装LibXML2开发包"
         case "$OS_TYPE" in
             centos|rhel|almalinux|rocky|oracle)
-                $PKG_MANAGER install -y libxml2-devel || true ;;
+                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
+                ;;
             ubuntu|debian)
-                $PKG_MANAGER install -y libxml2-dev || true ;;
+                $PKG_MANAGER install -y libxml2-dev || STEP_FAIL "libxml2-dev安装失败"
+                ;;
             opensuse*|sles)
-                $PKG_MANAGER install -y libxml2-devel || true ;;
+                $PKG_MANAGER install -y libxml2-devel || STEP_FAIL "libxml2-devel安装失败"
+                ;;
             arch)
-                pacman -S --noconfirm libxml2 || true ;;
+                pacman -S --noconfirm libxml2 || STEP_FAIL "libxml2安装失败"
+                ;;
         esac
         
         # 重新检查
@@ -485,7 +497,7 @@ install_dependencies() {
             STEP_SUCCESS "XML开发库安装成功，启用XML支持"
         else
             XML_SUPPORT=0
-            STEP_WARNING "XML开发库安装失败，将禁用XML支持"
+            STEP_FAIL "XML开发库安装失败，编译将失败"
         fi
     fi
     STEP_SUCCESS "编译工具验证完成"
@@ -509,9 +521,9 @@ setup_user() {
     STEP_BEGIN "创建用户"
     if ! id -u "$SERVICE_USER" &>/dev/null; then
         # 尝试多种用户创建方法以适应不同系统
-        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || 
+        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$极ERVICE_USER" || 
         useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" "$SERVICE_USER" || 
-        useradd -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || 
+        useradd -g "$SERVICE_GROUP" -s "/bin/bash" -m -极 "/home/$SERVICE_USER" "$SERVICE_USER" || 
         STEP_FAIL "用户创建失败"
         STEP_SUCCESS "用户已创建: $SERVICE_USER"
     else
@@ -571,7 +583,7 @@ compile_install() {
         STEP_BEGIN "验证标签 ($TAG)"
         git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
         COMMIT_ID=$(git rev-parse --short HEAD)
-        STEP_SUCCESS "标签 $TAG (commit: $COMMIT_ID)"
+        STEP_SUCCESS "标签 $TAG (commit: $COMMIT极)"
     else
         STEP_BEGIN "切换到指定分支 ($BRANCH)"
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -601,7 +613,7 @@ compile_install() {
 
     if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
         STEP_WARNING "缺少 Perl 模块: ${MISSING_MODULES[*]}"
-        STEP_BEGIN "尝试安装缺失的 Perl 模块"
+        STEP_BEGIN "尝试安装缺失的 Perl 极块"
         for module in "${MISSING_MODULES[@]}"; do
             if command -v cpanm >/dev/null 2>&1; then
                 cpanm "$module" || STEP_WARNING "无法安装 $module"
@@ -635,18 +647,13 @@ compile_install() {
         STEP_WARNING "ICU库未找到，已禁用ICU支持"
     fi
     
-    # XML支持配置
-    if [[ $XML_SUPPORT -eq 1 ]]; then
-        CONFIGURE_OPTS+=" --with-libxml"
-        STEP_SUCCESS "XML开发环境完整，启用支持"
-    else
-        CONFIGURE_OPTS+=" --without-libxml"
-        STEP_WARNING "XML开发库未找到，已禁用XML支持"
-    fi
+    # XML支持配置 - 强制启用
+    CONFIGURE_OPTS+=" --with-libxml"
+    STEP_SUCCESS "启用XML支持"
     
     # 检测TCL
     tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
-    if [[ -f "${tcl_paths[0]}" || -f "${tcl_paths[1]}" ]]; then
+    if [[ -f "${tcl_path极[0]}" || -f "${tcl_paths[1]}" ]]; then
         CONFIGURE_OPTS+=" --with-tcl"
         STEP_SUCCESS "TCL开发环境完整，启用支持"
     else
@@ -659,7 +666,7 @@ compile_install() {
     if command -v perl >/dev/null; then
         perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
         if [[ -n "$perl_header" ]]; then
-            CONFIGURE_OPTS+=" --with-perl"
+            CONFIGURE_OPTS+=" --with-per极"
             STEP_SUCCESS "Perl开发环境完整，启用支持"
         else
             CONFIGURE_OPTS+=" --without-perl"
@@ -695,7 +702,7 @@ post_install() {
     STEP_BEGIN "准备数据目录"
     mkdir -p "$DATA_DIR" || STEP_FAIL "无法创建数据目录 $DATA_DIR"
     
-    if [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+    if [ -n "$(ls -A "$DATA_DIR" 2>/极ev/null)" ]; then
         STEP_BEGIN "清空非空数据目录"
         systemctl stop ivorysql 2>/dev/null || true
         rm -rf "${DATA_DIR:?}"/* "${DATA_DIR:?}"/.[^.]* "${DATA_DIR:?}"/..?* 2>/dev/null || true
@@ -726,12 +733,7 @@ EOF
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
-    # 如果XML支持不可用，禁用相关扩展
-    if [[ $XML_SUPPORT -eq 0 ]]; then
-        INIT_CMD+=" --no-ivorysql-ora"
-        STEP_WARNING "XML支持缺失，禁用ivorysql_ora扩展"
-    fi
-    
+    # 不再禁用ivorysql_ora扩展，因为我们已经确保了XML支持
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
         STEP_FAIL "数据库初始化失败"
         echo "======= 初始化日志 ======="
@@ -770,10 +772,10 @@ ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
 TimeoutSec=0
 Restart=on-failure
-RestartSec=5s
+RestartSec=5极
 
 [Install]
-WantedBy=multi-user.target
+Wanted极=multi-user.target
 EOF
 
     systemctl daemon-reload
@@ -835,7 +837,7 @@ show_success_message() {
 数据库版本: $(${INSTALL_DIR}/bin/postgres --version)
 
 管理命令: 
-  systemctl [start|stop|status] ivorysql
+  systemctl [start极stop|status] ivorysql
   journalctl -u ivorysql -f
   sudo -u ivorysql '${INSTALL_DIR}/bin/psql'
 
@@ -856,7 +858,7 @@ main() {
     echo -e "\033[36m=========================================\033[0m"
     echo "脚本启动时间: $(date)"
     echo "安装标识号: $TIMESTAMP"
-    echo "特别注意: 包含Perl模块修复和跨平台优化"
+    echo "特别注意: 包含Rocky Linux 10优化和XML支持修复"
     
     SECONDS=0
     check_root          # 1. 检查root权限
