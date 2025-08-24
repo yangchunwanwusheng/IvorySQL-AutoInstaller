@@ -225,15 +225,6 @@ TAG=IvorySQL_4.5.3
 | TCL | `/usr/include/tcl.h` | 检测不到时添加 `--without-tcl` |
 | Perl | `/usr/bin/perl` 和 Perl 头文件 | 检测不到时添加 `--without-perl` |
 
-#### 操作系统特定依赖安装命令
-
-| 操作系统 | 安装命令 |
-|----------|----------|
-| RHEL 系列 (CentOS/RHEL/Rocky) | `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
-| Debian 系列 (Ubuntu/Debian) | `apt-get install build-essential libreadline-dev zlib1g-dev libssl-dev` |
-| SUSE 系列 (openSUSE/SLES) | `zypper install gcc make flex bison readline-devel zlib-devel libopenssl-devel` |
-| Arch Linux | `pacman -S base-devel readline zlib openssl` |
-
 #### 实现特性
 - **操作系统自动识别**：精确检测RHEL/Debian/SUSE等主流发行版
 - **核心依赖强制安装**：确保编译工具链和核心库完备
