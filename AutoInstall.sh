@@ -127,7 +127,7 @@ load_config() {
     
     STEP_BEGIN "检查配置文件是否存在"
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        STEP_FAIL "配置文件 $极IG_FILE 不存在，请根据模板创建配置文件"
+        STEP_FAIL "配置文件 $CONFIG_FILE 不存在，请根据模板创建配置文件"
     fi
     STEP_SUCCESS "发现配置文件"
     
@@ -208,7 +208,6 @@ detect_environment() {
     PKG_MANAGER=""
     STEP_SUCCESS "检测到操作系统: $PRETTY_NAME"
     
-    # 专门处理Oracle Linux
     if [[ -f /etc/oracle-release ]]; then
         OS_TYPE="oracle"
         ORACLE_VERSION=$(grep -oE '([0-9]+)\.?([0-9]+)?' /etc/oracle-release | head -1)
@@ -308,7 +307,7 @@ install_dependencies() {
         centos|rhel|almalinux|rocky|fedora|oracle)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
             
-            # EL10系统的特殊处理 - 增强XML库安装
+            
             if [[ $RHEL_VERSION -eq 10 ]]; then
                 STEP_BEGIN "为EL10启用CRB仓库并安装XML开发库"
                 if [[ "$OS_TYPE" == "rocky" ]]; then
@@ -318,7 +317,7 @@ install_dependencies() {
                         $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
                     fi
                     
-                    # 明确尝试安装 libxml2-devel
+                    # 尝试安装 libxml2-devel
                     if $PKG_MANAGER install -y libxml2-devel; then
                         XML_SUPPORT=1
                         STEP_SUCCESS "成功安装 libxml2-devel，启用XML支持"
@@ -334,7 +333,7 @@ install_dependencies() {
                         fi
                     fi
                 elif [[ "$OS_TYPE" == "oracle" ]]; then
-                    # Oracle Linux 10特定仓库处理
+        
                     STEP_BEGIN "启用Oracle Linux 10开发者仓库"
                     if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
                         $PKG_MANAGER config-manager --enable ol10_developer || true
@@ -366,7 +365,7 @@ install_dependencies() {
     STEP_BEGIN "安装核心依赖"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky|fedora|oracle)
-            # Oracle Linux 专用设置
+           
             if [[ "$OS_TYPE" == "oracle" ]]; then
                 STEP_BEGIN "安装Oracle Linux特定依赖"
                 $PKG_MANAGER install -y oraclelinux-developer-release-el${RHEL_VERSION} 2>/dev/null || true
@@ -374,19 +373,19 @@ install_dependencies() {
                 STEP_SUCCESS "Oracle特定依赖处理完成"
             fi
             
-            # 通用EL依赖安装
+            
             if [[ "$PKG_MANAGER" == "dnf" ]]; then
                 $PKG_MANAGER group install -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             else
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             fi
             
-            # 强制安装readline-devel（必须安装）
+            
             STEP_BEGIN "安装readline开发包（必须）"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
-            # 特别处理：确保XML开发库已安装（针对非EL10系统或EL10中未在上面安装的情况）
+            # 特别处理：确保XML开发库已安装
             if [[ $XML_SUPPORT -eq 0 && $RHEL_VERSION -ne 10 ]]; then
                 STEP_BEGIN "安装XML开发库"
                 if $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[libxml_dep]}; then
@@ -403,7 +402,7 @@ install_dependencies() {
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
-            # 强制安装libreadline-dev（必须安装）
+            
             STEP_BEGIN "安装libreadline-dev（必须）"
             $PKG_MANAGER install -y libreadline-dev || STEP_FAIL "libreadline-dev安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
@@ -415,7 +414,7 @@ install_dependencies() {
                 libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
-            # 强制安装readline-devel（必须安装）
+           
             STEP_BEGIN "安装readline-devel（必须）"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
@@ -427,7 +426,7 @@ install_dependencies() {
                 perl-devel perl-ExtUtils-Embed || true
             ;;
         arch)
-            # 强制安装readline（必须安装）
+           ）
             STEP_BEGIN "安装readline（必须）"
             pacman -S --noconfirm readline || STEP_FAIL "readline安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
@@ -601,7 +600,7 @@ compile_install() {
                 break
             fi
             if [[ $i -eq 3 ]]; then
-                STEP_FAIL "代码克隆失败，请检查网络连接和极库地址"
+                STEP_FAIL "代码克隆失败，请检查网络连接和代码库地址"
             fi
             STEP_WARNING "克隆尝试 $i/3 失败，10秒后重试..."
             sleep 10
@@ -666,7 +665,7 @@ compile_install() {
     STEP_SUCCESS "Perl 环境验证通过"
     
     STEP_BEGIN "配置编译参数"
-    # 基础配置选项 - 直接启用readline（已确保安装）
+    
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-readline"
     STEP_SUCCESS "启用readline支持"
     
