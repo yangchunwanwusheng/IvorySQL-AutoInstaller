@@ -199,7 +199,7 @@ graph TD
 **配置示例**：
 ```ini
 # IvorySQL 自动化安装配置
-INSTALL_DIR=/opt/ivorysql
+INSTALL_DIR=/usr/ivorysql
 DATA_DIR=/var/lib/ivorysql/data
 SERVICE_USER=ivorysql
 SERVICE_GROUP=ivorysql
