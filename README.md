@@ -177,7 +177,7 @@ graph TD
 
 ### 3.1 配置文件详解
 
-> **重要变更**：配置文件位置已从 `/etc/ivorysql/install.conf` 改为项目目录下的 `ivorysql.conf`
+> **重要变更**：配置文件位置为项目目录下的 `ivorysql.conf`
 
 | 配置项 | 是否必需 | 默认值 | 说明 |
 |--------|----------|--------|------|
@@ -290,11 +290,11 @@ Type=forking
 User=ivorysql
 Group=ivorysql
 Environment=PGDATA=/var/lib/ivorysql/data
-Environment=LD_LIBRARY_PATH=/opt/ivorysql/lib:/opt/ivorysql/lib/postgresql
+Environment=LD_LIBRARY_PATH=/usr/ivorysql/lib:/usr/ivorysql/lib/postgresql
 OOMScoreAdjust=-1000
-ExecStart=/opt/ivorysql/bin/pg_ctl start -D ${PGDATA} -s -w -t 60
-ExecStop=/opt/ivorysql/bin/pg_ctl stop -D ${PGDATA} -s -m fast
-ExecReload=/opt/ivorysql/bin/pg_ctl reload -D ${PGDATA}
+ExecStart=/usr/ivorysql/bin/pg_ctl start -D ${PGDATA} -s -w -t 60
+ExecStop=/usr/ivorysql/bin/pg_ctl stop -D ${PGDATA} -s -m fast
+ExecReload=/usr/ivorysql/bin/pg_ctl reload -D ${PGDATA}
 TimeoutSec=0
 Restart=on-failure
 RestartSec=5s
@@ -315,7 +315,7 @@ WantedBy=multi-user.target
 
 ```bash
 # --- IvorySQL Environment Configuration ---
-PATH="/opt/ivorysql/bin:$PATH"
+PATH="/usr/ivorysql/bin:$PATH"
 export PATH
 PGDATA="/var/lib/ivorysql/data"
 export PGDATA
@@ -384,7 +384,7 @@ export PGDATA
 2. **配置参考**：
    ```ini
    # IvorySQL 自动化安装配置
-   INSTALL_DIR=/opt/ivorysql
+   INSTALL_DIR=/usr/ivorysql
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
@@ -423,7 +423,7 @@ sudo bash AutoInstall.sh
 管理命令: 
   systemctl [start|stop|status] ivorysql
   journalctl -u ivorysql -f
-  sudo -u ivorysql '/opt/ivorysql/bin/psql'
+  sudo -u ivorysql '/usr/ivorysql/bin/psql'
 
 安装时间: 2025年 08月 26日 星期二 14:30:45 CST
 安装耗时: 215 秒
@@ -441,9 +441,9 @@ sudo bash AutoInstall.sh
 | 服务状态 | `systemctl status ivorysql` | 查看服务运行状态 |
 | 服务日志 | `journalctl -u ivorysql -f` | 实时查看服务日志 |
 | 重载配置 | `systemctl reload ivorysql` | 重载服务配置 |
-| 数据库连接 | `sudo -u ivorysql /opt/ivorysql/bin/psql` | 连接到数据库 |
-| 查询版本 | `/opt/ivorysql/bin/postgres --version` | 查看数据库版本 |
-| 初始化备份 | `sudo -u ivorysql /opt/ivorysql/bin/pg_basebackup` | 创建基础备份 |
+| 数据库连接 | `sudo -u ivorysql /usr/ivorysql/bin/psql` | 连接到数据库 |
+| 查询版本 | `/usr/ivorysql/bin/postgres --version` | 查看数据库版本 |
+| 初始化备份 | `sudo -u ivorysql /usr/ivorysql/bin/pg_basebackup` | 创建基础备份 |
 
 ## 5. 故障排查
 
@@ -471,7 +471,7 @@ sudo bash AutoInstall.sh
 
 3. **手动启动调试**：
    ```bash
-   sudo -u ivorysql /opt/ivorysql/bin/postgres -D /var/lib/ivorysql/data -c logging_collector=on
+   sudo -u ivorysql /usr/ivorysql/bin/postgres -D /var/lib/ivorysql/data -c logging_collector=on
    ```
 
 4. **检查配置文件**：
