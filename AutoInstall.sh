@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-CONFIG_FILE="/usr/ivorysql"
+CONFIG_FILE="/etc/ivorysql/install.conf"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""
 OS_VERSION=""
