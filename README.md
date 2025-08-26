@@ -381,7 +381,12 @@ export PGDATA
 
 1. **下载安装脚本**：
    ```bash
-   wget https://raw.githubusercontent.com/your-repo/IvorySQL-AutoInstall/main/AutoInstall.sh
+   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
+   ```
+
+2. **进入项目目录**：
+   ```bash
+   cd IvorySQL-AutoInstaller
    ```
 
 2. **运行脚本**：
