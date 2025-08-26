@@ -171,14 +171,13 @@ graph TD
     K -->|包含| J4[报告生成]
     
     style ERR fill:#FF5722,stroke:#333
-
 ```
 
 ## 3. 项目细节
 
 ### 3.1 配置文件详解
 
-配置文件路径：`/etc/ivorysql/install.conf`
+> **重要变更**：配置文件位置已从 `/etc/ivorysql/install.conf` 改为项目目录下的 `ivorysql.conf`
 
 | 配置项 | 是否必需 | 默认值 | 说明 |
 |--------|----------|--------|------|
@@ -224,6 +223,15 @@ TAG=IvorySQL_4.5.3
 | libxml2 | `/usr/include/libxml2/libxml/parser.h` | 检测不到时添加 `--without-libxml` |
 | TCL | `/usr/include/tcl.h` | 检测不到时添加 `--without-tcl` |
 | Perl | `/usr/bin/perl` 和 Perl 头文件 | 检测不到时添加 `--without-perl` |
+
+#### 操作系统特定依赖安装命令
+
+| 操作系统 | 安装命令 |
+|----------|----------|
+| RHEL 系列 (CentOS/RHEL/Rocky) | `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
+| Debian 系列 (Ubuntu/Debian) | `apt-get install build-essential libreadline-dev zlib1g-dev libssl-dev` |
+| SUSE 系列 (openSUSE/SLES) | `zypper install gcc make flex bison readline-devel zlib-devel libopenssl-devel` |
+| Arch Linux | `pacman -S base-devel readline zlib openssl` |
 
 #### 实现特性
 - **操作系统自动识别**：精确检测RHEL/Debian/SUSE等主流发行版
@@ -355,17 +363,25 @@ export PGDATA
    su -
    ```
 
-2. **创建配置文件目录**：
+
+2. **克隆项目**（包含配置文件）：
    ```bash
-   mkdir -p /etc/ivorysql
+   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
    ```
 
-3. **创建配置文件**：
+3. **进入项目目录**：
    ```bash
-   nano /etc/ivorysql/install.conf
+   cd IvorySQL-AutoInstaller
    ```
 
-4. **填写配置内容**（参考以下示例）：
+### 4.2 配置修改（可选）
+
+1. **编辑配置文件**：
+   ```bash
+   nano ivorysql.conf
+   ```
+
+2. **配置参考**：
    ```ini
    # IvorySQL 自动化安装配置
    INSTALL_DIR=/opt/ivorysql
@@ -377,25 +393,13 @@ export PGDATA
    TAG=IvorySQL_4.5.3
    ```
 
-### 4.2 执行安装
+### 4.3 执行安装
 
-1. **下载安装脚本**：
-   ```bash
-   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
-   ```
+```bash
+sudo bash AutoInstall.sh
+```
 
-2. **进入项目目录**：
-   ```bash
-   cd IvorySQL-AutoInstaller
-   ```
-
-2. **运行脚本**：
-   ```bash
-   sudo bash AutoInstall.sh
-   ```
-
-
-### 4.3 安装过程监控
+### 4.4 安装过程监控
 
 安装过程中，脚本会实时输出进度信息：
 
@@ -405,12 +409,12 @@ export PGDATA
 - **红色文本**：严重错误（安装终止）
 - **黄色文本**：警告信息（需要确认或注意）
 
-### 4.4 安装验证
+### 4.5 安装验证
 
 成功安装后，将显示以下信息：
 ```
 ================ 安装成功 ================
-安装目录: /opt/ivorysql
+安装目录: /usr/ivorysql
 数据目录: /var/lib/ivorysql/data
 日志目录: /var/log/ivorysql
 服务状态: active
@@ -421,14 +425,14 @@ export PGDATA
   journalctl -u ivorysql -f
   sudo -u ivorysql '/opt/ivorysql/bin/psql'
 
-安装时间: 2025年 03月 15日 星期六 14:30:45 CST
+安装时间: 2025年 08月 26日 星期二 14:30:45 CST
 安装耗时: 215 秒
 
-安装标识号: 20250315_143045
+安装标识号: 20250826_143045
 操作系统: rocky 10.2
 ```
 
-### 4.5 服务管理命令
+### 4.6 服务管理命令
 
 | 功能 | 命令 | 说明 |
 |------|------|------|
@@ -447,7 +451,7 @@ export PGDATA
 
 | 错误现象 | 可能原因 | 解决方案 |
 |----------|----------|----------|
-| 配置文件不存在 | 未创建配置文件或路径错误 | 检查 `/etc/ivorysql/install.conf` 是否存在 |
+| 配置文件不存在 | 配置文件位置错误 | 检查项目目录下的 `ivorysql.conf` 是否存在 |
 | 依赖安装失败 | 网络问题或软件源不可用 | 检查网络连接，尝试更换软件源 |
 | 编译错误 | 系统环境不满足要求 | 检查系统版本是否符合要求，查看错误日志 |
 | 数据库初始化失败 | 数据目录权限问题 | 检查数据目录所有权：`chown ivorysql:ivorysql /var/lib/ivorysql/data` |
@@ -472,8 +476,8 @@ export PGDATA
 
 4. **检查配置文件**：
    ```bash
-   ls -l /etc/ivorysql/install.conf
-   cat /etc/ivorysql/install.conf
+   ls -l IvorySQL-AutoInstaller/ivorysql.conf
+   cat IvorySQL-AutoInstaller/ivorysql.conf
    ```
 
 ### 5.3 日志文件位置
@@ -488,34 +492,67 @@ export PGDATA
 #### Rocky Linux 10 / Oracle Linux 10 特殊处理
 对于 EL10 系列系统，脚本会自动启用 CRB/Devel 仓库以确保能安装必要的开发包：
 
-1. **启用 CRB 仓库**：
-   ```bash
-   dnf config-manager --set-enabled crb
-   ```
+1. **自动启用仓库**：
+   - 脚本会自动检测并启用 CRB 或 Devel 仓库
+   - 无需手动操作
 
-2. **尝试安装 libxml2-devel**：
-   ```bash
-   dnf install -y libxml2-devel
-   ```
+2. **XML支持增强**：
+   - 如果自动启用仓库失败，会尝试多种方式安装 libxml2-devel
+   - 包括使用 `--allowerasing` 参数强制安装
 
-3. **备用方案**：如果 CRB 仓库不可用，尝试启用 Devel 仓库：
+3. **日志中查看状态**：
    ```bash
-   dnf config-manager --set-enabled devel
+   grep "XML_SUPPORT" /var/log/ivorysql/install_*.log
    ```
 
 #### Perl 环境问题处理
 如果系统缺少必要的 Perl 模块，脚本会尝试自动安装：
 
-1. **检查缺失模块**：
-   ```bash
-   perl -MFindBin -e 1 2>/dev/null || echo "FindBin 模块缺失"
-   perl -MIPC::Run -e 1 2>/dev/null || echo "IPC::Run 模块缺失"
-   ```
+1. **自动检查模块**：
+   - 脚本会自动检测缺失的 Perl 模块（FindBin、IPC::Run）
+   - 尝试通过系统包管理器或 CPAN 安装
 
-2. **自动安装缺失模块**：
+2. **手动安装（如果需要）**：
    ```bash
    # 尝试使用系统包管理器
    dnf install -y perl-IPC-Run
    # 或使用 CPAN
    cpan -i IPC::Run FindBin
    ```
+
+3. **验证安装**：
+   ```bash
+   perl -MFindBin -e 1
+   perl -MIPC::Run -e 1
+   ```
+
+
+
+## 6. 附录：完整工作流
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant S as 脚本
+    participant G as Git
+    participant D as 依赖系统
+    participant C as 编译系统
+    participant Sys as 系统服务
+    
+    U->>S: sudo bash AutoInstall.sh
+    S->>S: 加载配置文件
+    S->>S: 初始化日志系统
+    S->>S: 创建系统用户/组
+    S->>S: 检测操作系统
+    S->>D: 安装系统依赖
+    D-->>S: 返回安装结果
+    S->>G: 克隆源码
+    G-->>S: 返回源码
+    S->>C: 配置编译参数
+    S->>C: 执行编译安装
+    C-->>S: 返回编译状态
+    S->>Sys: 配置系统服务
+    Sys-->>S: 返回服务状态
+    S->>U: 显示安装报告
+```
+
