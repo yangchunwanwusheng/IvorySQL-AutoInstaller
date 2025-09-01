@@ -497,7 +497,7 @@ install_dependencies() {
         STEP_SUCCESS "XML开发库已找到，将启用XML支持"
     else
         XML_SUPPORT=0
-        STEP_WARNING "XML开发库未找到，将禁用XML支持"
+        STEP_WARNING "XML开发库未找到，将安装XML开发包"
     fi
     
     # 确保LibXML2开发库存在 - 特别针对Rocky Linux 10
