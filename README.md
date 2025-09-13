@@ -36,148 +36,166 @@ IvorySQL-AutoInstall is a professional shell installer designed to simplify comp
 
 ```mermaid
 graph TD
-    A[Start] --> B[Root Privilege Check]
-    B --> C[Load Configuration]
-    C --> D[Initialize Logging]
-    D --> E[Create System User/Group]
-    E --> F[Detect OS Environment]
-    F --> G[Install Dependencies]
-    G --> H[Compile & Install from Source]
-    H --> I[Post-Install Configuration]
-    I --> J[Verify Installation]
-    J --> K[Success Report]
+    A[Start] --> B[Check root privileges]
+    B --> C[Load config (ivorysql.conf in the same directory)]
+    C --> F[Detect OS environment]
+    F --> E[Create system user/group]
+    E --> D[Initialize logging]
+    D --> G[Install system dependencies]
+    G -->|XML support state| H[Build from source]
+    H --> I[Post-install configuration]
+    I -->|XML support state| J[Verification]
+    J --> K[Success report]
 
     style A fill:#4CAF50,stroke:#333
     style K fill:#4CAF50,stroke:#333
 
-    B -->|Failure| ERR[Print Error and Exit]
-    C -->|Config Error| ERR
-    D -->|Logging Init Failed| ERR
-    E -->|User Creation Failed| ERR
-    F -->|Unsupported Environment| ERR
-    G -->|Dependency Install Failed| ERR
-    H -->|Build Error| ERR
-    I -->|Config Error| ERR
-    J -->|Service Start Failed| ERR
+    %% Unified error sink
+    B -->|Failure| ERR[Print error and exit]
+    C -->|Config error| ERR
+    F -->|Unsupported environment| ERR
+    E -->|User creation failed| ERR
+    D -->|Logging init failed| ERR
+    G -->|Dependency install failed| ERR
+    H -->|Build error| ERR
+    I -->|Configuration error| ERR
+    J -->|Start failed| ERR
+    style ERR fill:#FF5722,stroke:#333
 
-    subgraph Configuration Stage
-        C1[Config Validation] --> C11[Path Format Check]
-        C1 --> C12[Reserved Name Filter]
-        C1 --> C13[Dangerous Character Scan]
-        C1 --> C14[Version Priority]
+    %% Configuration phase (load_config)
+    subgraph Configuration
+        C1[Config validation] --> C11[Path format check]
+        C1 --> C12[Reserved-name filter]
+        C1 --> C13[Dangerous-character scan]
+        C1 --> C14[Version priority handling]
         C --> C1
     end
 
+    %% Environment detection (detect_environment)
     subgraph Environment Detection
-        F1[OS Detection] --> F11[RHEL Family]
-        F1 --> F12[Debian Family]
-        F1 --> F13[SUSE Family]
+        F1[OS identification] --> F11[RHEL family]
+        F1 --> F12[Debian family]
+        F1 --> F13[SUSE family]
         F1 --> F14[Arch Linux]
-        F1 --> F15[Special Handling]
+        F1 --> F15[Special handling]
         F --> F1
 
-        F2[Package Manager] --> F21[dnf/yum]
+        F2[Package manager selection] --> F21[dnf/yum]
         F2 --> F22[apt-get]
         F2 --> F23[zypper]
         F2 --> F24[pacman]
         F --> F2
     end
 
+    %% Dependency management (install_dependencies)
     subgraph Dependency Management
-        G1[Core Deps] --> G11[Toolchain]
-        G1 --> G12[Core Libraries]
-        G1 --> G13[Perl Environment]
+        G1[Core dependencies] --> G11[Build toolchain]
+        G1 --> G12[Core libraries]
+        G1 --> G13[Perl runtime]
         G --> G1
 
-        G2[Optional Deps] --> G21[ICU Detection]
-        G2 --> G22[XML Support Detection]
-        G2 --> G23[TCL Detection]
-        G2 --> G24[Perl Dev Headers]
+        G2[Optional dependencies] --> G21[ICU check]
+        G2 --> G22[XML support check]
+        G2 --> G23[TCL check]
+        G2 --> G24[Perl dev environment]
         G --> G2
 
-        G3[Special Handling] --> G31[Rocky Linux 10]
+        G3[Special handling] --> G31[Rocky Linux 10]
         G3 --> G32[Oracle Linux]
-        G3 --> G33[Perl Module Install]
+        G3 --> G33[Perl modules install]
         G --> G3
+
+        %% XML support affects build flags
+        G2 -->|XML support state| H4[Configure build]
     end
 
-    subgraph Build Stage
-        H1[Source Retrieval] --> H11[Git Clone]
-        H1 --> H12[Retry Strategy]
+    %% Compilation (compile_install)
+    subgraph Build & Install
+        H1[Source retrieval] --> H11[Git clone]
+        H1 --> H12[Retry mechanism]
         H --> H1
 
-        H2[Version Control] --> H21[TAG First]
-        H2 --> H22[BRANCH Switch]
-        H2 --> H23[Record Commit ID]
+        %% NON_INTERACTIVE only affects confirmation here
+        C --> NI{NON_INTERACTIVE?}
+        NI -->|Yes| H2b[Skip source/version confirmations]
+        NI -->|No| H2a[Run source/version confirmations]
         H --> H2
+        H2a --> H2
+        H2b --> H2
 
-        H3[Env Validation] --> H31[Perl Module Check]
-        H3 --> H32[Toolchain Check]
+        H2[Version control] --> H21[TAG first]
+        H2 --> H22[Branch switch]
+        H2 --> H23[Record commit ID]
+
+        H3[Environment checks] --> H31[Perl modules verified]
+        H3 --> H32[Toolchain verified]
         H --> H3
 
-        H4[Configure Options] --> H41[Base Flags]
-        H4 --> H42[Feature Flags]
-        H4 --> H43[Run ./configure]
+        H4[Configure build] --> H41[Base flags]
+        H4 --> H42[Feature flags (--with/--without-*)]
+        H4 --> H43[Run configure]
         H --> H4
 
-        H5[Build Process] --> H51[Parallel Make]
-        H5 --> H52[Error Handling]
+        H5[Build process] --> H51[Parallel build]
+        H5 --> H52[Error handling]
         H --> H5
 
-        H6[Install Process] --> H61[Binary Install]
-        H6 --> H62[Ownership Set]
+        H6[Install process] --> H61[Install binaries]
+        H6 --> H62[Set permissions]
         H --> H6
     end
 
-    subgraph Post-Install
-        I1[Data Directory] --> I11[Create Folder]
-        I1 --> I12[Set Permissions]
-        I1 --> I13[Clear Non-Empty Dir]
+    %% Post-install (post_install)
+    subgraph Post-install
+        I1[Data directory] --> I11[Create directories]
+        I1 --> I12[Set ownership/permissions]
+        I1 --> I13[Clean non-empty directory]
         I --> I1
 
-        I2[Environment] --> I21[bash_profile Setup]
-        I2 --> I22[Activate Variables]
+        I2[Environment variables] --> I21[Configure bash_profile]
+        I2 --> I22[Apply environment variables]
         I --> I2
 
-        I3[DB Initialization] --> I31[initdb]
-        I3 --> I32[Feature Switches]
-        I3 --> I33[Log Recording]
+        I3[Database initialization] --> I31[Run initdb]
+        I3 --> I32[Feature handling (XML, etc.)]
+        I3 --> I33[Log records]
         I --> I3
 
-        I4[Service Config] --> I41[Unit File]
-        I4 --> I42[Unit Params]
-        I4 --> I43[Enable Service]
-        I4 --> I44[OOM Protection]
+        I4[Service configuration] --> I41[Create unit file]
+        I4 --> I42[Service args (-t 60, etc.)]
+        I4 --> I43[Enable service]
+        I4 --> I44[OOM protection]
         I --> I4
     end
 
+    %% Verification (verify_installation)
     subgraph Verification
-        J1[Service Start] --> J11[systemctl start]
-        J1 --> J12[Error Handling]
+        J1[Service start] --> J11[systemctl start]
+        J1 --> J12[Error handling]
         J --> J1
 
-        J2[Status Monitor] --> J21[Active Check]
-        J2 --> J22[Timeout Handling]
+        J2[Status monitoring] --> J21[Check active status]
+        J2 --> J22[Timeout handling]
         J --> J2
 
-        J3[Function Check] --> J31[Extension Check]
-        J3 --> J32[Connectivity Test]
+        J3[Functional checks] --> J31[Extension verification]
+        J3 --> J32[Connectivity test]
         J --> J3
 
-        J4[Report] --> J41[Install Summary]
-        J4 --> J42[Admin Commands]
-        J4 --> J43[Troubleshooting]
+        J4[Report generation] --> J41[Install summary]
+        J4 --> J42[Admin commands]
+        J4 --> J43[Troubleshooting guide]
         J --> J4
     end
 
-    %% Additional Optimizations
-    D -->|Early Logging| G[Install Dependencies]
-    G2 -->|Realtime Feedback| H4[Configure Options]
-    I3 -->|XML Support State| I32[Feature Switches]
-    J -->|Service Status| J2[Status Monitor]
-    K -->|Include| J4[Report]
+    %% Key alignments
+    %% Create user before logging, so log dir ownership is correct
+    E -->|Log dir owner/permissions| D
+    %% XML affects both build flags and init handling
+    G2 -->|XML support state| I32
+    %% Success report includes the report block
+    K -->|Includes| J4
 
-    style ERR fill:#FF5722,stroke:#333
 ```
 
 ## 3. Project Details
@@ -500,26 +518,42 @@ perl -MIPC::Run -e 1
 sequenceDiagram
     participant U as User
     participant S as Script
-    participant G as Git
-    participant D as Dependencies
-    participant C as Build
-    participant Sys as Systemd
+    participant G as Git Remote
+    participant D as Package Manager/Deps
+    participant C as Build/Compiler
+    participant Sys as systemd Service
 
     U->>S: sudo bash AutoInstall.sh
-    S->>S: Load configuration
-    S->>S: Initialize logging
-    S->>S: Create user/group
-    S->>S: Detect OS
-    S->>D: Install dependencies
-    D-->>S: Result
-    S->>G: Clone source
-    G-->>S: Source
-    S->>C: Configure build flags
-    S->>C: Build & install
-    C-->>S: Build result
-    S->>Sys: Configure system service
+    S->>S: Check root privileges
+    S->>S: Load config (ivorysql.conf in script directory)
+    S->>S: Detect OS / distro / package manager
+    S->>S: Create system user/group
+    S->>S: Initialize logging (set log dir owner/permissions)
+    S->>D: Install dependencies (core & optional: ICU/XML/TCL/Perl)
+    D-->>S: Return install result & XML support state
+
+    S->>G: Git clone source (with retry)
+    alt NON_INTERACTIVE=1
+        S->>S: Skip source/version confirmations (auto-accept)
+    else NON_INTERACTIVE=0
+        S->>U: Prompt to confirm source/branch/tag
+        U-->>S: User confirms
+    end
+
+    S->>S: Version ops (prefer TAG / switch branch / record commit)
+    S->>C: Pass XML support → compose build flags (--with/--without-xml)
+    S->>C: Run ./configure (with optional features)
+    S->>C: Parallel build & install
+    C-->>S: Build & install status
+
+    S->>S: Post-install: initdb / env vars / logging records
+    S->>Sys: Write & load systemd unit (-t 60, OOM protection)
+    S->>Sys: Enable & start service
     Sys-->>S: Service status
-    S->>U: Show install report
+
+    S->>S: Verify: systemctl is-active / connectivity / extensions
+    S->>U: Show success report (versions/paths/service status incl. XML state)
+
 ```
 
 ---
@@ -557,29 +591,32 @@ IvorySQL-AutoInstall 是一个专业的自动化安装脚本，旨在简化 Ivor
 ```mermaid
 graph TD
     A[开始] --> B[Root权限检查]
-    B --> C[加载配置文件]
-    C --> D[初始化日志系统]
-    D --> E[创建系统用户/组]
-    E --> F[检测操作系统环境]
-    F --> G[安装系统依赖]
-    G --> H[源码编译安装]
+    B --> C[加载配置文件（同目录 ivorysql.conf）]
+    C --> F[检测操作系统环境]
+    F --> E[创建系统用户/组]
+    E --> D[初始化日志系统]
+    D --> G[安装系统依赖]
+    G -->|XML支持状态| H[源码编译安装]
     H --> I[后期配置]
-    I --> J[验证安装]
+    I -->|XML支持状态| J[验证安装]
     J --> K[输出成功报告]
 
     style A fill:#4CAF50,stroke:#333
     style K fill:#4CAF50,stroke:#333
 
+    %% 统一错误出口
     B -->|失败| ERR[输出错误并退出]
     C -->|配置错误| ERR
-    D -->|日志初始化失败| ERR
-    E -->|用户创建失败| ERR
     F -->|环境不支持| ERR
+    E -->|用户创建失败| ERR
+    D -->|日志初始化失败| ERR
     G -->|依赖安装失败| ERR
     H -->|编译错误| ERR
     I -->|配置错误| ERR
     J -->|启动失败| ERR
+    style ERR fill:#FF5722,stroke:#333
 
+    %% 配置阶段（与脚本的 load_config 对齐）
     subgraph 配置阶段
         C1[配置文件验证] --> C11[路径格式检查]
         C1 --> C12[保留名称过滤]
@@ -588,6 +625,7 @@ graph TD
         C --> C1
     end
 
+    %% 环境检测先于创建用户（与 detect_environment 对齐）
     subgraph 环境检测
         F1[操作系统识别] --> F11[RHEL系列]
         F1 --> F12[Debian系列]
@@ -603,6 +641,7 @@ graph TD
         F --> F2
     end
 
+    %% 依赖管理（与 install_dependencies 对齐）
     subgraph 依赖管理
         G1[核心依赖] --> G11[编译工具链]
         G1 --> G12[核心库]
@@ -619,24 +658,35 @@ graph TD
         G3 --> G32[Oracle Linux]
         G3 --> G33[Perl模块安装]
         G --> G3
+
+        %% XML 支持会影响编译参数与后期功能处理
+        G2 -->|XML支持状态| H4[编译配置]
     end
 
+    %% 编译阶段（与 compile_install 对齐）
     subgraph 编译阶段
         H1[源码获取] --> H11[Git克隆]
         H1 --> H12[重试机制]
         H --> H1
 
+        %% NON_INTERACTIVE 只影响这里的确认流程
+        C --> NI{NON_INTERACTIVE?}
+        NI -->|是| H2b[跳过“来源/版本确认”]
+        NI -->|否| H2a[进行“来源/版本确认”]
+        H --> H2
+        H2a --> H2
+        H2b --> H2
+
         H2[版本控制] --> H21[TAG优先]
         H2 --> H22[分支切换]
         H2 --> H23[Commit ID记录]
-        H --> H2
 
         H3[环境验证] --> H31[Perl模块验证]
         H3 --> H32[工具链验证]
         H --> H3
 
         H4[编译配置] --> H41[基础参数]
-        H4 --> H42[功能支持参数]
+        H4 --> H42[功能支持参数（--with/--without-*）]
         H4 --> H43[配置执行]
         H --> H4
 
@@ -649,6 +699,7 @@ graph TD
         H --> H6
     end
 
+    %% 后期配置（与 post_install 对齐）
     subgraph 后期配置
         I1[数据目录] --> I11[目录创建]
         I1 --> I12[权限设置]
@@ -660,17 +711,18 @@ graph TD
         I --> I2
 
         I3[数据库初始化] --> I31[initdb命令]
-        I3 --> I32[功能支持处理]
+        I3 --> I32[功能支持处理（XML等）]
         I3 --> I33[日志记录]
         I --> I3
 
         I4[服务配置] --> I41[服务文件创建]
-        I4 --> I42[服务参数配置]
+        I4 --> I42[服务参数配置（-t 60 等）]
         I4 --> I43[服务启用]
         I4 --> I44[OOM保护配置]
         I --> I4
     end
 
+    %% 验证阶段（与 verify_installation 对齐）
     subgraph 验证阶段
         J1[服务启动] --> J11[systemctl启动]
         J1 --> J12[错误处理]
@@ -690,14 +742,14 @@ graph TD
         J --> J4
     end
 
-    %% 新增的优化点
-    D -->|提前日志初始化| G[依赖安装]
-    G2 -->|实时反馈| H4[编译配置]
-    I3 -->|XML支持状态| I32[功能支持处理]
-    J -->|服务状态| J2[状态监控]
-    K -->|包含| J4[报告生成]
+    %% 关键对齐点/优化
+    %% 日志目录与属主：先建用户再初始化日志，更贴合脚本
+    E -->|日志目录属主/权限| D
+    %% XML 支持在“编译参数”和“初始化功能处理”两处体现
+    G2 -->|XML支持状态| I32
+    %% 成功报告包含报告生成块
+    K -->|包含| J4
 
-    style ERR fill:#FF5722,stroke:#333
 ```
 
 ## 3. 项目细节
@@ -1069,26 +1121,42 @@ NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
 sequenceDiagram
     participant U as 用户
     participant S as 脚本
-    participant G as Git
-    participant D as 依赖系统
-    participant C as 编译系统
-    participant Sys as 系统服务
+    participant G as Git 源
+    participant D as 依赖系统/包管理器
+    participant C as 编译/构建系统
+    participant Sys as systemd 服务
 
     U->>S: sudo bash AutoInstall.sh
-    S->>S: 加载配置文件
-    S->>S: 初始化日志系统
+    S->>S: 检查 Root 权限
+    S->>S: 加载配置文件（同目录 ivorysql.conf）
+    S->>S: 检测操作系统与发行版/包管理器
     S->>S: 创建系统用户/组
-    S->>S: 检测操作系统
-    S->>D: 安装系统依赖
-    D-->>S: 返回安装结果
-    S->>G: 克隆源码
-    G-->>S: 返回源码
-    S->>C: 配置编译参数
-    S->>C: 执行编译安装
-    C-->>S: 返回编译状态
-    S->>Sys: 配置系统服务
+    S->>S: 初始化日志系统（设置日志目录属主/权限）
+    S->>D: 安装系统依赖（核心与可选：ICU/XML/TCL/Perl等）
+    D-->>S: 返回依赖安装结果与 XML 支持状态
+
+    S->>G: 克隆源码（带重试）
+    alt NON_INTERACTIVE=1
+        S->>S: 跳过来源/版本确认（自动接受）
+    else NON_INTERACTIVE=0
+        S->>U: 交互确认源码来源/分支/标签
+        U-->>S: 确认信息
+    end
+
+    S->>S: 版本控制处理（TAG优先/切换分支/记录Commit）
+    S->>C: 传递 XML 支持状态 → 生成编译参数（--with/--without-xml 等）
+    S->>C: 运行 ./configure（含可选特性）
+    S->>C: 并行编译 && 安装
+    C-->>S: 返回编译与安装状态
+
+    S->>S: 后期配置：initdb / 环境变量 / 日志记录
+    S->>Sys: 写入并加载 systemd 单元（含 -t 60、OOM 保护）
+    S->>Sys: enable && start 服务
     Sys-->>S: 返回服务状态
-    S->>U: 显示安装报告
+
+    S->>S: 验证：systemctl is-active / 连接测试 / 扩展检查
+    S->>U: 显示安装报告（版本/目录/服务状态，含 XML 支持状态）
+
 ```
 
 
