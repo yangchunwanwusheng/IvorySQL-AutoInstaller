@@ -4,7 +4,7 @@ set -eo pipefail
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""
 OS_VERSION=""
-XML_SUPPORT=0  # XML支持状态：0-禁用，1-启用
+XML_SUPPORT=0  
 
 CURRENT_STAGE() {
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
@@ -256,7 +256,7 @@ detect_environment() {
             ;;
             
         opensuse*|sles)
-            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.极]' /etc/os-release)
+            SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
             
             if [[ "$ID" == "opensuse-leap" ]]; then
                 [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL "不支持的openSUSE Leap版本"
@@ -267,7 +267,7 @@ detect_environment() {
             fi
             
             PKG_MANAGER="zypper"
-            STEP_SUCCESS "极包管理器: zypper"
+            STEP_SUCCESS "使用包管理器: zypper"
             ;;
             
         arch)
@@ -361,7 +361,7 @@ install_dependencies() {
             $PKG_MANAGER refresh || true
             ;;
         arch)
-            pacman -Syu --noconfirm
+            pacman -Sy --noconfirm
             ;;
     esac
     STEP_SUCCESS "软件源更新完成"
@@ -466,7 +466,7 @@ install_dependencies() {
             $PKG_MANAGER install -y perl-modules libipc-run-perl || true
             ;;
         opensuse*|sles)
-            $PKG极ANAGER install -y perl-IPC-Run || true
+            $PKG_MANAGER install -y perl-IPC-Run || true
             ;;
         arch)
             pacman -S --noconfirm perl-ipc-run || true
@@ -581,10 +581,10 @@ setup_user() {
 compile_install() {
     CURRENT_STAGE "源码编译安装"
     
-    local repo_dir=$(basename "$REPO_URL" .git)
-    
+    local repo_dir
+    repo_dir="$(basename "$REPO_URL" .git)"
     STEP_BEGIN "获取源代码"
-    if [[ ! -d "IvorySQL" ]]; then
+    if [[ ! -d "$repo_dir" ]]; then
         git_clone_cmd="git clone"
         
         if [[ -n "$TAG" ]]; then
@@ -611,9 +611,9 @@ compile_install() {
         done
         STEP_SUCCESS "代码库克隆完成"
     else
-        STEP_SUCCESS "发现现有代码库"
+        STEP_SUCCESS "发现现有代码库: $repo_dir"
     fi
-    cd "IvorySQL" || STEP_FAIL "无法进入源码目录"
+    cd "$repo_dir" || STEP_FAIL "无法进入源码目录: $repo_dir"
     
     if [[ -n "$TAG" ]]; then
         STEP_BEGIN "验证标签 ($TAG)"
@@ -919,3 +919,4 @@ main() {
 }
 
 main "$@"
+
