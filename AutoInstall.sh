@@ -1,6 +1,9 @@
 #!/bin/bash
 set -eo pipefail
 
+# 非交互模式：设置为1以跳过所有 read -p 确认
+NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""
 OS_VERSION=""
@@ -27,6 +30,14 @@ STEP_WARNING() {
     echo -e "  \033[33m⚠ $1\033[0m"
 }
 
+
+
+die() {
+    local msg="$1"; shift || true
+    echo -e "  [31m✗ ${msg}[0m" >&2
+    [[ $# -gt 0 ]] && echo -e "$*" >&2
+    exit 1
+}
 handle_error() {
     local line=$1 command=$2
     STEP_FAIL "安装失败！位置: 第 ${line} 行\n命令: ${command}"
@@ -98,9 +109,13 @@ validate_config() {
             
             if [[ ! "$value" =~ github\.com/IvorySQL/IvorySQL ]]; then
                 STEP_WARNING "警告: 使用的代码库可能不是官方源 ($value)"
+                if [[ $NON_INTERACTIVE -eq 1 ]]; then
+                STEP_WARNING "检测到非官方源（自动接受，NON_INTERACTIVE=1）"
+            else
                 read -p "确认使用非官方源? (y/N) " -n 1 -r
                 echo
                 [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL "安装中止：用户拒绝非官方源"
+            fi
             fi
             ;;
             
@@ -112,9 +127,13 @@ validate_config() {
                 
                 if [[ ${#value} -gt 100 ]]; then
                     STEP_WARNING "警告: $key 长度超过100字符 (当前值: '$value')"
+                    if [[ $NON_INTERACTIVE -eq 1 ]]; then
+                    STEP_WARNING "检测到超长标识（自动接受，NON_INTERACTIVE=1）"
+                else
                     read -p "确认使用超长标识? (y/N) " -n 1 -r
                     echo
                     [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL "安装中止：用户拒绝超长标识"
+                fi
                 fi
             fi
             ;;
@@ -135,11 +154,14 @@ STEP_BEGIN "检查配置文件是否存在"
 STEP_SUCCESS "发现配置文件"
 
 STEP_BEGIN "加载配置文件"
-    source "$CONFIG_FILE" || STEP_FAIL "无法加载配置文件 $CONFIG_FILE，请检查文件格式是否正确"
+if grep -Evq '^\s*([A-Z_][A-Z0-9_]*\s*=\s*.*|#|$)' "$CONFIG_FILE"; then
+    STEP_FAIL "配置文件包含不受支持的语句（仅允许 KEY=VALUE、注释、空行）"
+fi
+source "$CONFIG_FILE" || STEP_FAIL "无法加载配置文件 $CONFIG_FILE，请检查文件格式是否正确"
 STEP_SUCCESS "配置文件加载成功"
     
     STEP_BEGIN "验证配置完整性"
-    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL")
+    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL" "LOG_DIR")
     for var in "${required_vars[@]}"; do
         [[ -z "${!var}" ]] && STEP_FAIL "配置缺失: $var 未设置"
     done
@@ -166,7 +188,6 @@ init_logging() {
     STEP_BEGIN "创建日志目录"
     mkdir -p "$LOG_DIR" || STEP_FAIL "无法创建日志目录 $LOG_DIR"
     
-    # 只有在用户已存在的情况下才设置权限
     if id -u "$SERVICE_USER" &>/dev/null && getent group "$SERVICE_GROUP" &>/dev/null; then
         chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR" || STEP_WARNING "日志目录权限设置失败，继续安装"
         STEP_SUCCESS "日志目录已创建并设置权限"
@@ -187,7 +208,7 @@ check_root() {
     STEP_BEGIN "验证用户权限"
     [[ "$(id -u)" -ne 0 ]] && { 
         STEP_FAIL "必须使用root权限运行此脚本"
-        echo -e "请使用：\033[33msudo $0 $@\033[0m" >&2
+        echo -e "请使用：\033[33msudo "$0" "$@"\033[0m" >&2
         exit 1
     }
     STEP_SUCCESS "root权限验证通过"
@@ -384,8 +405,8 @@ install_dependencies() {
                 $PKG_MANAGER groupinstall -y "${OS_SPECIFIC_DEPS[rhel_group]}" || true
             fi
             
-            # 强制安装readline-devel（必须安装）
-            STEP_BEGIN "安装readline开发包（必须）"
+            # 强制安装readline-devel
+            STEP_BEGIN "安装readline开发包"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
@@ -406,8 +427,8 @@ install_dependencies() {
                 tcl-devel libicu-devel || true
             ;;
         ubuntu|debian)
-            # 强制安装libreadline-dev（必须安装）
-            STEP_BEGIN "安装libreadline-dev（必须）"
+            # 强制安装libreadline-dev
+            STEP_BEGIN "安装libreadline-dev"
             $PKG_MANAGER install -y libreadline-dev || STEP_FAIL "libreadline-dev安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
@@ -418,8 +439,8 @@ install_dependencies() {
                 libperl-dev perl-modules || true
             ;;
         opensuse*|sles)
-            # 强制安装readline-devel（必须安装）
-            STEP_BEGIN "安装readline-devel（必须）"
+            # 强制安装readline-devel
+            STEP_BEGIN "安装readline-devel"
             $PKG_MANAGER install -y readline-devel || STEP_FAIL "readline-devel安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
@@ -430,8 +451,8 @@ install_dependencies() {
                 perl-devel perl-ExtUtils-Embed || true
             ;;
         arch)
-            # 强制安装readline（必须安装）
-            STEP_BEGIN "安装readline（必须）"
+            # 强制安装readline
+            STEP_BEGIN "安装readline"
             pacman -S --noconfirm readline || STEP_FAIL "readline安装失败，必须安装readline开发包"
             STEP_SUCCESS "readline开发包安装成功"
             
@@ -454,7 +475,7 @@ install_dependencies() {
             if ! $PKG_MANAGER install -y perl-IPC-Run 2>/dev/null; then
                 STEP_WARNING "perl-IPC-Run 包不可用，尝试通过 CPAN 安装"
                 # 使用 CPAN 安装缺失的模块
-                cpan -i IPC::Run FindBin || {
+                PERL_MM_USE_DEFAULT=1 cpan -i IPC::Run FindBin || {
                     STEP_WARNING "CPAN 安装失败，尝试其他方法"
                     # 如果 CPAN 不可用，尝试使用 cpanm
                     curl -L https://cpanmin.us | perl - App::cpanminus || true
@@ -617,7 +638,7 @@ compile_install() {
     
     if [[ -n "$TAG" ]]; then
         STEP_BEGIN "验证标签 ($TAG)"
-        git checkout tags/"$TAG" --progress || STEP_FAIL "标签切换失败: $TAG"
+        git checkout "tags/$TAG" || STEP_FAIL "标签切换失败: $TAG"
         COMMIT_ID=$(git rev-parse --short HEAD)
         STEP_SUCCESS "标签 $TAG (commit: $COMMIT_ID)"
     else
@@ -774,7 +795,6 @@ EOF
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
-    # 如果XML支持不可用，禁用相关扩展
     if [[ $XML_SUPPORT -eq 0 ]]; then
         INIT_CMD+=" --no-ivorysql-ora"
         STEP_WARNING "XML支持缺失，禁用ivorysql_ora扩展"
@@ -816,7 +836,7 @@ OOMScoreAdjust=-1000
 ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
-TimeoutSec=0
+TimeoutSec=60
 Restart=on-failure
 RestartSec=5s
 
@@ -918,5 +938,6 @@ main() {
     verify_installation # 9. 验证安装
 }
 
+main "$@"
 main "$@"
 
