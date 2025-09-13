@@ -35,35 +35,35 @@ IvorySQL-AutoInstall is a professional shell installer designed to simplify comp
 ## 2. Architecture Overview
 
 ```mermaid
-graph TD
+flowchart TD
     A[Start] --> B[Check root privileges]
-    B --> C[Load config (ivorysql.conf in the same directory)]
-    C --> F[Detect OS environment]
-    F --> E[Create system user/group]
+    B --> C[Load config: ivorysql.conf in script directory]
+    C --> F[Detect operating system]
+    F --> E[Create system user and group]
     E --> D[Initialize logging]
     D --> G[Install system dependencies]
     G -->|XML support state| H[Build from source]
     H --> I[Post-install configuration]
-    I -->|XML support state| J[Verification]
+    I -->|XML support state| J[Verify installation]
     J --> K[Success report]
 
     style A fill:#4CAF50,stroke:#333
     style K fill:#4CAF50,stroke:#333
 
     %% Unified error sink
-    B -->|Failure| ERR[Print error and exit]
-    C -->|Config error| ERR
-    F -->|Unsupported environment| ERR
-    E -->|User creation failed| ERR
-    D -->|Logging init failed| ERR
-    G -->|Dependency install failed| ERR
-    H -->|Build error| ERR
-    I -->|Configuration error| ERR
-    J -->|Start failed| ERR
+    B -->|failure| ERR[Print error and exit]
+    C -->|config error| ERR
+    F -->|unsupported environment| ERR
+    E -->|user creation failed| ERR
+    D -->|logging init failed| ERR
+    G -->|dependency install failed| ERR
+    H -->|build error| ERR
+    I -->|configuration error| ERR
+    J -->|service start failed| ERR
     style ERR fill:#FF5722,stroke:#333
 
-    %% Configuration phase (load_config)
-    subgraph Configuration
+    %% Configuration Phase
+    subgraph Configuration Phase
         C1[Config validation] --> C11[Path format check]
         C1 --> C12[Reserved-name filter]
         C1 --> C13[Dangerous-character scan]
@@ -71,7 +71,7 @@ graph TD
         C --> C1
     end
 
-    %% Environment detection (detect_environment)
+    %% Environment Detection before user creation
     subgraph Environment Detection
         F1[OS identification] --> F11[RHEL family]
         F1 --> F12[Debian family]
@@ -80,14 +80,14 @@ graph TD
         F1 --> F15[Special handling]
         F --> F1
 
-        F2[Package manager selection] --> F21[dnf/yum]
+        F2[Package manager selection] --> F21[dnf or yum]
         F2 --> F22[apt-get]
         F2 --> F23[zypper]
         F2 --> F24[pacman]
         F --> F2
     end
 
-    %% Dependency management (install_dependencies)
+    %% Dependency Management
     subgraph Dependency Management
         G1[Core dependencies] --> G11[Build toolchain]
         G1 --> G12[Core libraries]
@@ -97,42 +97,42 @@ graph TD
         G2[Optional dependencies] --> G21[ICU check]
         G2 --> G22[XML support check]
         G2 --> G23[TCL check]
-        G2 --> G24[Perl dev environment]
+        G2 --> G24[Perl development environment]
         G --> G2
 
         G3[Special handling] --> G31[Rocky Linux 10]
         G3 --> G32[Oracle Linux]
-        G3 --> G33[Perl modules install]
+        G3 --> G33[Perl modules installation]
         G --> G3
 
-        %% XML support affects build flags
-        G2 -->|XML support state| H4[Configure build]
+        %% XML support affects compile flags and later feature handling
+        G2 -->|XML support state| H4[Configure build flags]
     end
 
-    %% Compilation (compile_install)
-    subgraph Build & Install
+    %% Build Stage
+    subgraph Build Stage
         H1[Source retrieval] --> H11[Git clone]
         H1 --> H12[Retry mechanism]
         H --> H1
 
-        %% NON_INTERACTIVE only affects confirmation here
+        %% NON_INTERACTIVE only affects confirmations
         C --> NI{NON_INTERACTIVE?}
-        NI -->|Yes| H2b[Skip source/version confirmations]
-        NI -->|No| H2a[Run source/version confirmations]
+        NI -->|yes| H2b[Skip source and version confirmation]
+        NI -->|no| H2a[Run source and version confirmation]
         H --> H2
         H2a --> H2
         H2b --> H2
 
         H2[Version control] --> H21[TAG first]
-        H2 --> H22[Branch switch]
+        H2 --> H22[Switch branch]
         H2 --> H23[Record commit ID]
 
         H3[Environment checks] --> H31[Perl modules verified]
         H3 --> H32[Toolchain verified]
         H --> H3
 
-        H4[Configure build] --> H41[Base flags]
-        H4 --> H42[Feature flags (--with/--without-*)]
+        H4[Configure build flags] --> H41[Base flags]
+        H4 --> H42[Feature flags: --with or --without xml and others]
         H4 --> H43[Run configure]
         H --> H4
 
@@ -145,30 +145,30 @@ graph TD
         H --> H6
     end
 
-    %% Post-install (post_install)
+    %% Post-install
     subgraph Post-install
-        I1[Data directory] --> I11[Create directories]
-        I1 --> I12[Set ownership/permissions]
+        I1[Data directory] --> I11[Create directory]
+        I1 --> I12[Set ownership and permissions]
         I1 --> I13[Clean non-empty directory]
         I --> I1
 
-        I2[Environment variables] --> I21[Configure bash_profile]
+        I2[Environment variables] --> I21[Configure bash profile]
         I2 --> I22[Apply environment variables]
         I --> I2
 
         I3[Database initialization] --> I31[Run initdb]
-        I3 --> I32[Feature handling (XML, etc.)]
+        I3 --> I32[Feature handling: XML and others]
         I3 --> I33[Log records]
         I --> I3
 
-        I4[Service configuration] --> I41[Create unit file]
-        I4 --> I42[Service args (-t 60, etc.)]
+        I4[Service configuration] --> I41[Create systemd unit]
+        I4 --> I42[Service arguments: timeout 60]
         I4 --> I43[Enable service]
         I4 --> I44[OOM protection]
         I --> I4
     end
 
-    %% Verification (verify_installation)
+    %% Verification
     subgraph Verification
         J1[Service start] --> J11[systemctl start]
         J1 --> J12[Error handling]
@@ -189,11 +189,8 @@ graph TD
     end
 
     %% Key alignments
-    %% Create user before logging, so log dir ownership is correct
-    E -->|Log dir owner/permissions| D
-    %% XML affects both build flags and init handling
+    E -->|Log directory ownership and permissions| D
     G2 -->|XML support state| I32
-    %% Success report includes the report block
     K -->|Includes| J4
 
 ```
