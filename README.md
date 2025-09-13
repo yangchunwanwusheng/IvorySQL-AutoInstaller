@@ -1,3 +1,511 @@
+<p align="right">
+  <a href="#english">English</a> | <a href="#中文">中文</a>
+</p>
+
+<a id="english"></a>
+# IvorySQL-AutoInstall — User Guide
+
+> Applies to **AutoInstall.fixed.sh** with config **ivorysql.conf**. Last updated: 2025-09-13 15:29:35
+
+## 1. Project Introduction
+
+IvorySQL-AutoInstall is a professional shell installer designed to simplify compiling and installing IvorySQL from source. With a simple configuration file, users can complete the entire process—from building from source to starting the service—without manually running complex commands.
+
+### 1.1 Core Features
+
+- **Environment detection & validation**: Detect OS family/version and verify compatibility
+- **Smart dependency management**: Install build-time dependencies with multiple package managers
+- **Source fetch & compilation**: Clone from a specified repository and accelerate builds with parallel make
+- **Automated installation & configuration**: Set up install/data/log directories and ownership
+- **Service integration**: Create a systemd unit and configure environment variables
+- **Comprehensive logging**: Detailed logs for every step to aid troubleshooting
+- **Error handling & rollback**: Robust detection and handling logic to fail fast with guidance
+
+### 1.2 Supported Operating Systems
+
+| OS Family | Distributions | Supported Versions |
+|-----------|----------------|--------------------|
+| RHEL Family | CentOS, RHEL, Rocky Linux, AlmaLinux, Oracle Linux | 8.x, 9.x, 10.x |
+| Debian Family | Ubuntu, Debian | Ubuntu 18.04–24.04, Debian 10–12 |
+| SUSE Family | openSUSE, SLES | openSUSE Leap 15+, SLES 12.5+ |
+| Arch Linux | Arch Linux | Latest stable |
+
+> **Note**: CentOS 7 is not supported. Use official YUM packages instead.
+
+## 2. Architecture Overview
+
+```mermaid
+graph TD
+    A[Start] --> B[Root Privilege Check]
+    B --> C[Load Configuration]
+    C --> D[Initialize Logging]
+    D --> E[Create System User/Group]
+    E --> F[Detect OS Environment]
+    F --> G[Install Dependencies]
+    G --> H[Compile & Install from Source]
+    H --> I[Post-Install Configuration]
+    I --> J[Verify Installation]
+    J --> K[Success Report]
+
+    style A fill:#4CAF50,stroke:#333
+    style K fill:#4CAF50,stroke:#333
+
+    B -->|Failure| ERR[Print Error and Exit]
+    C -->|Config Error| ERR
+    D -->|Logging Init Failed| ERR
+    E -->|User Creation Failed| ERR
+    F -->|Unsupported Environment| ERR
+    G -->|Dependency Install Failed| ERR
+    H -->|Build Error| ERR
+    I -->|Config Error| ERR
+    J -->|Service Start Failed| ERR
+
+    subgraph Configuration Stage
+        C1[Config Validation] --> C11[Path Format Check]
+        C1 --> C12[Reserved Name Filter]
+        C1 --> C13[Dangerous Character Scan]
+        C1 --> C14[Version Priority]
+        C --> C1
+    end
+
+    subgraph Environment Detection
+        F1[OS Detection] --> F11[RHEL Family]
+        F1 --> F12[Debian Family]
+        F1 --> F13[SUSE Family]
+        F1 --> F14[Arch Linux]
+        F1 --> F15[Special Handling]
+        F --> F1
+
+        F2[Package Manager] --> F21[dnf/yum]
+        F2 --> F22[apt-get]
+        F2 --> F23[zypper]
+        F2 --> F24[pacman]
+        F --> F2
+    end
+
+    subgraph Dependency Management
+        G1[Core Deps] --> G11[Toolchain]
+        G1 --> G12[Core Libraries]
+        G1 --> G13[Perl Environment]
+        G --> G1
+
+        G2[Optional Deps] --> G21[ICU Detection]
+        G2 --> G22[XML Support Detection]
+        G2 --> G23[TCL Detection]
+        G2 --> G24[Perl Dev Headers]
+        G --> G2
+
+        G3[Special Handling] --> G31[Rocky Linux 10]
+        G3 --> G32[Oracle Linux]
+        G3 --> G33[Perl Module Install]
+        G --> G3
+    end
+
+    subgraph Build Stage
+        H1[Source Retrieval] --> H11[Git Clone]
+        H1 --> H12[Retry Strategy]
+        H --> H1
+
+        H2[Version Control] --> H21[TAG First]
+        H2 --> H22[BRANCH Switch]
+        H2 --> H23[Record Commit ID]
+        H --> H2
+
+        H3[Env Validation] --> H31[Perl Module Check]
+        H3 --> H32[Toolchain Check]
+        H --> H3
+
+        H4[Configure Options] --> H41[Base Flags]
+        H4 --> H42[Feature Flags]
+        H4 --> H43[Run ./configure]
+        H --> H4
+
+        H5[Build Process] --> H51[Parallel Make]
+        H5 --> H52[Error Handling]
+        H --> H5
+
+        H6[Install Process] --> H61[Binary Install]
+        H6 --> H62[Ownership Set]
+        H --> H6
+    end
+
+    subgraph Post-Install
+        I1[Data Directory] --> I11[Create Folder]
+        I1 --> I12[Set Permissions]
+        I1 --> I13[Clear Non-Empty Dir]
+        I --> I1
+
+        I2[Environment] --> I21[bash_profile Setup]
+        I2 --> I22[Activate Variables]
+        I --> I2
+
+        I3[DB Initialization] --> I31[initdb]
+        I3 --> I32[Feature Switches]
+        I3 --> I33[Log Recording]
+        I --> I3
+
+        I4[Service Config] --> I41[Unit File]
+        I4 --> I42[Unit Params]
+        I4 --> I43[Enable Service]
+        I4 --> I44[OOM Protection]
+        I --> I4
+    end
+
+    subgraph Verification
+        J1[Service Start] --> J11[systemctl start]
+        J1 --> J12[Error Handling]
+        J --> J1
+
+        J2[Status Monitor] --> J21[Active Check]
+        J2 --> J22[Timeout Handling]
+        J --> J2
+
+        J3[Function Check] --> J31[Extension Check]
+        J3 --> J32[Connectivity Test]
+        J --> J3
+
+        J4[Report] --> J41[Install Summary]
+        J4 --> J42[Admin Commands]
+        J4 --> J43[Troubleshooting]
+        J --> J4
+    end
+
+    %% Additional Optimizations
+    D -->|Early Logging| G[Install Dependencies]
+    G2 -->|Realtime Feedback| H4[Configure Options]
+    I3 -->|XML Support State| I32[Feature Switches]
+    J -->|Service Status| J2[Status Monitor]
+    K -->|Include| J4[Report]
+
+    style ERR fill:#FF5722,stroke:#333
+```
+
+## 3. Project Details
+
+### 3.1 Configuration File
+
+> **Location**: `ivorysql.conf` in the project root
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| INSTALL_DIR | Yes | — | Install prefix (absolute path) |
+| DATA_DIR | Yes | — | Data directory (absolute path) |
+| SERVICE_USER | Yes | — | Service user (not a reserved name) |
+| SERVICE_GROUP | Yes | — | Service group (not a reserved name) |
+| REPO_URL | Yes | — | IvorySQL source repository URL |
+| LOG_DIR | Yes | /var/log/ivorysql | Log directory (absolute path) |
+| TAG | Optional | — | Release tag (preferred) |
+| BRANCH | Optional | — | Source branch |
+
+**Notes**
+- All paths must be absolute and without spaces
+- Either TAG or BRANCH must be set (TAG takes precedence if both are set)
+- Service user/group must not be system-reserved names (e.g., root, bin, daemon)
+- The script enforces `chmod 600` on the config file
+
+**Example**
+```ini
+INSTALL_DIR=/usr/ivorysql
+DATA_DIR=/var/lib/ivorysql/data
+SERVICE_USER=ivorysql
+SERVICE_GROUP=ivorysql
+REPO_URL=https://github.com/IvorySQL/IvorySQL.git
+LOG_DIR=/var/log/ivorysql
+TAG=IvorySQL_4.5.3
+```
+
+### 3.2 Dependency Management
+
+#### Core Dependencies (mandatory)
+- Toolchain: GCC, Make, Flex, Bison
+- Core libs: readline, zlib, openssl
+- Perl: perl-core, perl-devel, perl-IPC-Run
+
+#### Optional Dependencies (auto-detected; features disabled if missing)
+
+| Library | Check Path | Auto Handling |
+|--------|------------|---------------|
+| ICU | `/usr/include/icu.h` or `/usr/include/unicode/utypes.h` | Add `--without-icu` if not found |
+| libxml2 | `/usr/include/libxml2/libxml/parser.h` | Add `--without-libxml` if not found |
+| TCL | `/usr/include/tcl.h` | Add `--without-tcl` if not found |
+| Perl | `/usr/bin/perl` and headers | Add `--without-perl` if dev env missing |
+
+#### OS-Specific Commands
+
+| OS | Commands |
+|----|----------|
+| RHEL Family | `dnf group install "Development Tools"`<br>`dnf install readline-devel zlib-devel openssl-devel` |
+| Debian Family | `apt-get install build-essential libreadline-dev zlib1g-dev libssl-dev` |
+| SUSE Family | `zypper install gcc make flex bison readline-devel zlib-devel libopenssl-devel` |
+| Arch Linux | `pacman -S base-devel readline zlib openssl` |
+
+#### Features
+- **OS auto-detection**
+- **Mandatory toolchain installation**
+- **Smart feature gating** by scanning headers and adjusting `./configure` flags
+- **Toolchain verification**, e.g.:
+  ```bash
+  for cmd in gcc make flex bison; do
+    command -v $cmd >/dev/null || echo "Warning: $cmd not installed"
+  done
+  ```
+
+### 3.3 Build Process
+
+#### Versioning
+- Prefer TAG if set
+- Fallback to BRANCH if TAG is not set
+- Record short commit ID
+
+#### Configure
+```bash
+./configure --prefix=$INSTALL_DIR             --with-openssl             --with-readline             --without-icu \        # when ICU not found
+            --without-libxml \     # when libxml2 not found
+            --without-tcl \        # when TCL not found
+            --without-perl         # when Perl dev not found
+```
+
+#### Parallel Build
+- Use all CPUs: `make -j$(nproc)`
+
+#### Post-Install
+- Ownership: `chown -R $SERVICE_USER:$SERVICE_GROUP $INSTALL_DIR`
+- Validate binaries
+
+### 3.4 Service Management
+
+#### Systemd Unit
+Path: `/etc/systemd/system/ivorysql.service`
+
+```ini
+[Unit]
+Description=IvorySQL Database Server
+Documentation=https://www.ivorysql.org
+Requires=network.target local-fs.target
+After=network.target local-fs.target
+
+[Service]
+Type=forking
+User=ivorysql
+Group=ivorysql
+Environment=PGDATA=/var/lib/ivorysql/data
+Environment=LD_LIBRARY_PATH=/usr/ivorysql/lib:/usr/ivorysql/lib/postgresql
+OOMScoreAdjust=-1000
+ExecStart=/usr/ivorysql/bin/pg_ctl start -D ${PGDATA} -s -w -t 60
+ExecStop=/usr/ivorysql/bin/pg_ctl stop -D ${PGDATA} -s -m fast
+ExecReload=/usr/ivorysql/bin/pg_ctl reload -D ${PGDATA}
+TimeoutSec=60
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Notes**
+- `OOMScoreAdjust=-1000`: largely reduces the chance of OOM-killer terminating the DB
+- `TimeoutSec=60`: provide reasonable timeout rather than 0
+- `Restart=on-failure`: auto-restart on failure
+- `Type=forking`: proper management of background process
+- `LD_LIBRARY_PATH`: ensure libraries are loaded correctly
+
+#### Environment Setup
+Path: `/home/ivorysql/.bash_profile`
+```bash
+# --- IvorySQL Environment Configuration ---
+PATH="/usr/ivorysql/bin:$PATH"
+export PATH
+PGDATA="/var/lib/ivorysql/data"
+export PGDATA
+# --- End of Configuration ---
+```
+
+**Effect**
+- Run tools like `psql` directly
+- Data directory recognized via `PGDATA`
+- Auto-configured environment for the service user
+- Correct library loading
+
+### 3.5 Logging System
+
+#### Layout
+```
+/var/log/ivorysql/
+├── install_YYYYmmdd_HHMMSS.log  # install logs
+├── error_YYYYmmdd_HHMMSS.log    # error logs
+├── initdb_YYYYmmdd_HHMMSS.log   # initdb logs
+└── postgresql.log               # DB runtime log
+```
+
+#### Features
+- Rotation via PostgreSQL built-in logging
+- Ownership: `chown -R ivorysql:ivorysql /var/log/ivorysql`
+- Adjustable log levels (DB config)
+- Timestamped, step-marked install logs
+
+#### Example
+```
+[14:25:33] Config Loading
+  → Check config file exists...
+  ✓ Found configuration
+  → Load configuration...
+  ✓ Loaded successfully
+```
+
+## 4. User Guide
+
+### 4.1 Preparation
+1. **Switch to root**:
+   ```bash
+   su -
+   ```
+2. **Clone the project** (contains the config):
+   ```bash
+   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
+   ```
+3. **Enter the project directory**:
+   ```bash
+   cd IvorySQL-AutoInstaller
+   ```
+
+### 4.2 (Optional) Edit Configuration
+1. **Open config**:
+   ```bash
+   nano ivorysql.conf
+   ```
+2. **Reference**:
+   ```ini
+   INSTALL_DIR=/usr/ivorysql
+   DATA_DIR=/var/lib/ivorysql/data
+   SERVICE_USER=ivorysql
+   SERVICE_GROUP=ivorysql
+   REPO_URL=https://github.com/IvorySQL/IvorySQL.git
+   LOG_DIR=/var/log/ivorysql
+   TAG=IvorySQL_4.5.3
+   ```
+
+### 4.3 Run Installation
+```bash
+sudo bash AutoInstall.fixed.sh
+```
+
+### 4.4 Monitor Progress
+- **Blue**: stage title
+- **Plain**: step begin
+- **Green**: success
+- **Red**: fatal error
+- **Yellow**: warning
+
+### 4.5 Verify Installation
+An example success report:
+```
+================ INSTALL SUCCESS ================
+Install dir: /usr/ivorysql
+Data dir: /var/lib/ivorysql/data
+Log dir: /var/log/ivorysql
+Service: active
+Version: ivorysql (IvorySQL) 4.5.3
+
+Admin cmds:
+  systemctl [start|stop|status] ivorysql
+  journalctl -u ivorysql -f
+  sudo -u ivorysql '/usr/ivorysql/bin/psql'
+
+Time: 2025-08-26 14:30:45 CST
+Elapsed: 215 s
+Host: rocky 10.2
+```
+
+### 4.6 Service Commands
+| Action | Command | Notes |
+|-------|---------|-------|
+| Start | `systemctl start ivorysql` | Start DB service |
+| Stop | `systemctl stop ivorysql` | Stop DB service |
+| Status | `systemctl status ivorysql` | Inspect service state |
+| Logs | `journalctl -u ivorysql -f` | Follow service logs |
+| Reload | `systemctl reload ivorysql` | Reload configs |
+| Connect | `sudo -u ivorysql /usr/ivorysql/bin/psql` | Connect to DB |
+| Version | `/usr/ivorysql/bin/postgres --version` | Show version |
+| Base Backup | `sudo -u ivorysql /usr/ivorysql/bin/pg_basebackup` | Create base backup |
+
+## 5. Troubleshooting
+
+### 5.1 Common Issues
+
+| Symptom | Likely Cause | Fix |
+|--------|--------------|-----|
+| Config missing | Wrong path | Check `ivorysql.conf` exists |
+| Dependency install failed | Network/mirror issue | Check network; switch mirrors |
+| Build error | Unsupported env | Check OS version; read error log |
+| initdb failed | Data dir ownership | `chown ivorysql:ivorysql /var/lib/ivorysql/data` |
+| Service failed | Port conflict or config error | `ss -tulnp | grep 5432` |
+
+### 5.2 Diagnostic Commands
+```bash
+systemctl status ivorysql -l --no-pager
+journalctl -u ivorysql --since "1 hour ago" --no-pager
+sudo -u ivorysql /usr/ivorysql/bin/postgres -D /var/lib/ivorysql/data -c logging_collector=on
+ls -l IvorySQL-AutoInstaller/ivorysql.conf
+cat IvorySQL-AutoInstaller/ivorysql.conf
+```
+
+### 5.3 Log Locations
+- Install logs: `/var/log/ivorysql/install_<ts>.log`
+- Error logs: `/var/log/ivorysql/error_<ts>.log`
+- initdb logs: `/var/log/ivorysql/initdb_<ts>.log`
+- DB logs: `/var/log/ivorysql/postgresql.log`
+
+### 5.4 Special Handling
+
+#### Rocky Linux 10 / Oracle Linux 10
+- Auto-enable CRB/Devel repositories when needed
+- Fallback strategies to install `libxml2-devel` (including `--allowerasing`)
+- Check status:
+```bash
+grep "XML_SUPPORT" /var/log/ivorysql/install_*.log
+```
+
+#### Perl Environment
+- Auto-check required modules (`FindBin`, `IPC::Run`)
+- Try package manager or CPAN
+```bash
+dnf install -y perl-IPC-Run
+PERL_MM_USE_DEFAULT=1 cpan -i IPC::Run FindBin
+perl -MFindBin -e 1
+perl -MIPC::Run -e 1
+```
+
+## 6. Appendix: Full Workflow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Script
+    participant G as Git
+    participant D as Dependencies
+    participant C as Build
+    participant Sys as Systemd
+
+    U->>S: sudo bash AutoInstall.fixed.sh
+    S->>S: Load configuration
+    S->>S: Initialize logging
+    S->>S: Create user/group
+    S->>S: Detect OS
+    S->>D: Install dependencies
+    D-->>S: Result
+    S->>G: Clone source
+    G-->>S: Source
+    S->>C: Configure build flags
+    S->>C: Build & install
+    C-->>S: Build result
+    S->>Sys: Configure system service
+    Sys-->>S: Service status
+    S->>U: Show install report
+```
+
+---
+
+<a id="中文"></a>
 # IvorySQL-AutoInstall 自动化安装工具使用文档
 
 ## 1. 项目介绍
@@ -39,10 +547,10 @@ graph TD
     H --> I[后期配置]
     I --> J[验证安装]
     J --> K[输出成功报告]
-    
+
     style A fill:#4CAF50,stroke:#333
     style K fill:#4CAF50,stroke:#333
-    
+
     B -->|失败| ERR[输出错误并退出]
     C -->|配置错误| ERR
     D -->|日志初始化失败| ERR
@@ -52,7 +560,7 @@ graph TD
     H -->|编译错误| ERR
     I -->|配置错误| ERR
     J -->|启动失败| ERR
-    
+
     subgraph 配置阶段
         C1[配置文件验证] --> C11[路径格式检查]
         C1 --> C12[保留名称过滤]
@@ -60,7 +568,7 @@ graph TD
         C1 --> C14[版本优先级处理]
         C --> C1
     end
-    
+
     subgraph 环境检测
         F1[操作系统识别] --> F11[RHEL系列]
         F1 --> F12[Debian系列]
@@ -68,108 +576,108 @@ graph TD
         F1 --> F14[Arch Linux]
         F1 --> F15[特殊系统处理]
         F --> F1
-        
+
         F2[包管理器确定] --> F21[dnf/yum]
         F2 --> F22[apt-get]
         F2 --> F23[zypper]
         F2 --> F24[pacman]
         F --> F2
     end
-    
+
     subgraph 依赖管理
         G1[核心依赖] --> G11[编译工具链]
         G1 --> G12[核心库]
         G1 --> G13[Perl环境]
         G --> G1
-        
+
         G2[可选依赖] --> G21[ICU检测]
         G2 --> G22[XML支持检测]
         G2 --> G23[TCL检测]
         G2 --> G24[Perl开发环境]
         G --> G2
-        
+
         G3[特殊系统处理] --> G31[Rocky Linux 10]
         G3 --> G32[Oracle Linux]
         G3 --> G33[Perl模块安装]
         G --> G3
     end
-    
+
     subgraph 编译阶段
         H1[源码获取] --> H11[Git克隆]
         H1 --> H12[重试机制]
         H --> H1
-        
+
         H2[版本控制] --> H21[TAG优先]
         H2 --> H22[分支切换]
         H2 --> H23[Commit ID记录]
         H --> H2
-        
+
         H3[环境验证] --> H31[Perl模块验证]
         H3 --> H32[工具链验证]
         H --> H3
-        
+
         H4[编译配置] --> H41[基础参数]
         H4 --> H42[功能支持参数]
         H4 --> H43[配置执行]
         H --> H4
-        
+
         H5[编译过程] --> H51[并行编译]
         H5 --> H52[错误处理]
         H --> H5
-        
+
         H6[安装过程] --> H61[二进制安装]
         H6 --> H62[权限设置]
         H --> H6
     end
-    
+
     subgraph 后期配置
         I1[数据目录] --> I11[目录创建]
         I1 --> I12[权限设置]
         I1 --> I13[清除非空目录]
         I --> I1
-        
+
         I2[环境变量] --> I21[bash_profile配置]
         I2 --> I22[环境变量生效]
         I --> I2
-        
+
         I3[数据库初始化] --> I31[initdb命令]
         I3 --> I32[功能支持处理]
         I3 --> I33[日志记录]
         I --> I3
-        
+
         I4[服务配置] --> I41[服务文件创建]
         I4 --> I42[服务参数配置]
         I4 --> I43[服务启用]
         I4 --> I44[OOM保护配置]
         I --> I4
     end
-    
+
     subgraph 验证阶段
         J1[服务启动] --> J11[systemctl启动]
         J1 --> J12[错误处理]
         J --> J1
-        
+
         J2[状态监控] --> J21[活动状态检查]
         J2 --> J22[超时处理]
         J --> J2
-        
+
         J3[功能验证] --> J31[扩展功能验证]
         J3 --> J32[连接测试]
         J --> J3
-        
+
         J4[报告生成] --> J41[安装摘要]
         J4 --> J42[管理命令]
         J4 --> J43[问题排查指南]
         J --> J4
     end
-    
+
     %% 新增的优化点
     D -->|提前日志初始化| G[依赖安装]
     G2 -->|实时反馈| H4[编译配置]
     I3 -->|XML支持状态| I32[功能支持处理]
     J -->|服务状态| J2[状态监控]
     K -->|包含| J4[报告生成]
-    
+
     style ERR fill:#FF5722,stroke:#333
 ```
 
@@ -295,7 +803,7 @@ OOMScoreAdjust=-1000
 ExecStart=/usr/ivorysql/bin/pg_ctl start -D ${PGDATA} -s -w -t 60
 ExecStop=/usr/ivorysql/bin/pg_ctl stop -D ${PGDATA} -s -m fast
 ExecReload=/usr/ivorysql/bin/pg_ctl reload -D ${PGDATA}
-TimeoutSec=0
+TimeoutSec=60
 Restart=on-failure
 RestartSec=5s
 
@@ -305,7 +813,7 @@ WantedBy=multi-user.target
 
 **配置说明**：
 - `OOMScoreAdjust=-1000`：显著降低 OOM Killer 终止数据库进程的可能性
-- `TimeoutSec=0`：禁用超时限制，避免长时间操作被中断
+- `TimeoutSec=60`：禁用超时限制，避免长时间操作被中断
 - `Restart=on-failure`：服务异常退出时自动重启
 - `Type=forking`：正确管理后台进程的生命周期
 - `LD_LIBRARY_PATH`：确保正确加载 IvorySQL 库文件
@@ -396,7 +904,7 @@ export PGDATA
 ### 4.3 执行安装
 
 ```bash
-sudo bash AutoInstall.sh
+sudo bash AutoInstall.fixed.sh
 ```
 
 ### 4.4 安装过程监控
@@ -538,8 +1046,8 @@ sequenceDiagram
     participant D as 依赖系统
     participant C as 编译系统
     participant Sys as 系统服务
-    
-    U->>S: sudo bash AutoInstall.sh
+
+    U->>S: sudo bash AutoInstall.fixed.sh
     S->>S: 加载配置文件
     S->>S: 初始化日志系统
     S->>S: 创建系统用户/组
@@ -555,4 +1063,3 @@ sequenceDiagram
     Sys-->>S: 返回服务状态
     S->>U: 显示安装报告
 ```
-
