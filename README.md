@@ -5,7 +5,7 @@
 <a id="english"></a>
 # IvorySQL-AutoInstall — User Guide
 
-> Applies to **AutoInstall.fixed.sh** with config **ivorysql.conf**. Last updated: 2025-09-13 15:29:35
+> Applies to **AutoInstall.sh** with config **ivorysql.conf**. Last updated: 2025-09-13 15:29:35
 
 ## 1. Project Introduction
 
@@ -193,7 +193,7 @@ graph TD
 | SERVICE_USER | Yes | — | Service user (not a reserved name) |
 | SERVICE_GROUP | Yes | — | Service group (not a reserved name) |
 | REPO_URL | Yes | — | IvorySQL source repository URL |
-| LOG_DIR | Yes | /var/log/ivorysql | Log directory (absolute path) |
+| LOG_DIR | Yes | — | Log directory (absolute path) |
 | TAG | Optional | — | Release tag (preferred) |
 | BRANCH | Optional | — | Source branch |
 
@@ -327,7 +327,6 @@ export PGDATA
 - Correct library loading
 
 ### 3.5 Logging System
-
 #### Layout
 ```
 /var/log/ivorysql/
@@ -351,13 +350,30 @@ export PGDATA
   → Load configuration...
   ✓ Loaded successfully
 ```
+### 3.6 Non-Interactive Mode (`NON_INTERACTIVE`)
+- The script reads `NON_INTERACTIVE` at startup: `NON_INTERACTIVE="${NON_INTERACTIVE:-0}"`.
+- When **`NON_INTERACTIVE=1`**, the installer will **auto-accept** the following confirmations and continue:
+  1) Using a **non-official** repository (`REPO_URL` not under `github.com/IvorySQL/IvorySQL`)
+  2) Confirmations for **overlong** `TAG` / `BRANCH` identifiers (**length > 100**)
+- When unset or `0`, the installer will **prompt and wait** for your confirmation in the above scenarios.
+- This mode **does not skip errors** nor alter validation logic; it **only bypasses interactive prompts**.
+- **Example (CI/unattended):**
+  ```bash
+  NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
+  ```
+
+
+
 
 ## 4. User Guide
+
 
 ### 4.1 Preparation
 1. **Switch to root**:
    ```bash
    su -
+   # or
+   sudo -i
    ```
 2. **Clone the project** (contains the config):
    ```bash
@@ -373,28 +389,31 @@ export PGDATA
    ```bash
    nano ivorysql.conf
    ```
-2. **Reference**:
+2. **Reference (LOG_DIR is required; absolute paths only):**
    ```ini
    INSTALL_DIR=/usr/ivorysql
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
    REPO_URL=https://github.com/IvorySQL/IvorySQL.git
-   LOG_DIR=/var/log/ivorysql
-   TAG=IvorySQL_4.5.3
+   LOG_DIR=/var/log/ivorysql           # required (no default)
+   TAG=IvorySQL_4.5.3                  # optional; prefer TAG over BRANCH
+   # BRANCH=
    ```
 
-### 4.3 Run Installation
+### 4.3 Interactive Installation (default)
+> Suitable for manual runs; prompts on **non-official repo** or **overlong TAG/BRANCH**.
 ```bash
-sudo bash AutoInstall.fixed.sh
+sudo bash AutoInstall.sh -c ivorysql.conf
 ```
 
-### 4.4 Monitor Progress
-- **Blue**: stage title
-- **Plain**: step begin
-- **Green**: success
-- **Red**: fatal error
-- **Yellow**: warning
+### 4.4 Non-Interactive Installation (CI/unattended)
+Set `NON_INTERACTIVE=1` to **auto-accept** the prompts mentioned above. This only skips confirmations; it **does not** bypass validations or errors.
+
+**Example:**
+```bash
+NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
+```
 
 ### 4.5 Verify Installation
 An example success report:
@@ -486,7 +505,7 @@ sequenceDiagram
     participant C as Build
     participant Sys as Systemd
 
-    U->>S: sudo bash AutoInstall.fixed.sh
+    U->>S: sudo bash AutoInstall.sh
     S->>S: Load configuration
     S->>S: Initialize logging
     S->>S: Create user/group
@@ -694,7 +713,7 @@ graph TD
 | SERVICE_USER | 是 | 无 | 服务运行用户（不能使用系统保留名称） |
 | SERVICE_GROUP | 是 | 无 | 服务运行组（不能使用系统保留名称） |
 | REPO_URL | 是 | 无 | IvorySQL 源码仓库 URL |
-| LOG_DIR | 是 | /var/log/ivorysql | 日志目录（必须是绝对路径） |
+| LOG_DIR | 是 | 无 | 日志目录（必须是绝对路径） |
 | TAG | 可选 | 无 | 指定安装的版本标签（优先使用） |
 | BRANCH | 可选 | 无 | 指定安装的源码分支 |
 
@@ -702,7 +721,6 @@ graph TD
 - 所有路径配置必须是绝对路径，不能包含空格
 - 必须设置 TAG 或 BRANCH 中的一个，同时设置时优先使用 TAG
 - 用户/组名称不能使用系统保留名称（root, bin, daemon 等）
-- 配置文件权限自动设置为 600（仅 root 可读写）
 
 **配置示例**：
 ```ini
@@ -813,7 +831,7 @@ WantedBy=multi-user.target
 
 **配置说明**：
 - `OOMScoreAdjust=-1000`：显著降低 OOM Killer 终止数据库进程的可能性
-- `TimeoutSec=60`：禁用超时限制，避免长时间操作被中断
+- `TimeoutSec=60`：设置 60 秒超时
 - `Restart=on-failure`：服务异常退出时自动重启
 - `Type=forking`：正确管理后台进程的生命周期
 - `LD_LIBRARY_PATH`：确保正确加载 IvorySQL 库文件
@@ -862,15 +880,28 @@ export PGDATA
   ✓ 配置文件加载成功
 ```
 
+### 3.6 非交互模式（`NON_INTERACTIVE`）
+- 脚本在启动时读取环境变量：`NON_INTERACTIVE="${NON_INTERACTIVE:-0}"`。
+- 当 **`NON_INTERACTIVE=1`** 时，安装器会**自动接受**以下确认并继续执行：
+  1) 使用**非官方源**（当 `REPO_URL` 不在 `github.com/IvorySQL/IvorySQL` 域名下）
+  2) `TAG` / `BRANCH` **长度超过 100** 的确认提示
+- 未设置或设为 `0` 时，脚本会在上述场景**提示并等待用户确认**。
+- 该模式**不会跳过错误**、**不会降低校验严格度**，仅用于**跳过交互式确认**。
+- **示例（CI/无人值守）**：
+  ```bash
+  NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
+  ```
+
 ## 4. 使用指南
 
-### 4.1 准备工作
 
+### 4.1 准备工作
 1. **使用 root 权限**：
    ```bash
    su -
+   # 或
+   sudo -i
    ```
-
 
 2. **克隆项目**（包含配置文件）：
    ```bash
@@ -883,39 +914,35 @@ export PGDATA
    ```
 
 ### 4.2 配置修改（可选）
-
 1. **编辑配置文件**：
    ```bash
    nano ivorysql.conf
    ```
-
-2. **配置参考**：
+2. **配置参考（`LOG_DIR` 为必填；路径需为绝对路径）**：
    ```ini
-   # IvorySQL 自动化安装配置
    INSTALL_DIR=/usr/ivorysql
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
    REPO_URL=https://github.com/IvorySQL/IvorySQL.git
-   LOG_DIR=/var/log/ivorysql
-   TAG=IvorySQL_4.5.3
+   LOG_DIR=/var/log/ivorysql           # 必填（无默认值）
+   TAG=IvorySQL_4.5.3                  # 可选；与 BRANCH 二选一（TAG 优先）
+   # BRANCH=
    ```
 
-### 4.3 执行安装
-
+### 4.3 交互式安装（默认）
+> 适合手动部署；遇到**非官方源**或**超长 TAG/BRANCH** 时会提示确认。
 ```bash
-sudo bash AutoInstall.fixed.sh
+sudo bash AutoInstall.sh -c ivorysql.conf
 ```
 
-### 4.4 安装过程监控
+### 4.4 非交互式安装（CI/无人值守）
+将环境变量 `NON_INTERACTIVE=1`，脚本会**自动接受**上面提到的确认提示。仅跳过确认，**不**会跳过校验或错误。
 
-安装过程中，脚本会实时输出进度信息：
-
-- **蓝色文本**：当前阶段标题
-- **普通文本**：步骤开始提示
-- **绿色文本**：步骤成功完成
-- **红色文本**：严重错误（安装终止）
-- **黄色文本**：警告信息（需要确认或注意）
+**示例：**
+```bash
+NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
+```
 
 ### 4.5 安装验证
 
@@ -1047,7 +1074,7 @@ sequenceDiagram
     participant C as 编译系统
     participant Sys as 系统服务
 
-    U->>S: sudo bash AutoInstall.fixed.sh
+    U->>S: sudo bash AutoInstall.sh
     S->>S: 加载配置文件
     S->>S: 初始化日志系统
     S->>S: 创建系统用户/组
@@ -1063,3 +1090,7 @@ sequenceDiagram
     Sys-->>S: 返回服务状态
     S->>U: 显示安装报告
 ```
+
+
+
+
