@@ -14,23 +14,59 @@ CURRENT_STAGE() {
 }
 
 STEP_BEGIN() {
-    echo -e "→ $1."
+    echo -e "  → $1..."
 }
 
 STEP_SUCCESS() {
-    echo -e "\033[32m✓ $1\033[0m"
+    echo -e "  \033[32m✓ $1\033[0m"
 }
 
 STEP_FAIL() {
-    echo -e "\033[31m✗ $1\033[0m" >&2
+    echo -e "  \033[31m✗ $1\033[0m" >&2
     exit 1
 }
 
 STEP_WARNING() {
-    echo -e "\033[33m⚠ $1\033[0m"
+    echo -e "  \033[33m⚠ $1\033[0m"
 }
 
+# ---- helpers added (service detection and wrappers) ----
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+has_systemd() { has_cmd systemctl && [ -d /run/systemd/system ]; }
 
+sc() { env PYTHONWARNINGS=ignore systemctl "$@"; }
+
+svc_daemon_reload(){ if has_systemd; then sc daemon-reload; fi; }
+svc_enable(){ if has_systemd; then sc enable "$1"; fi; }
+svc_start(){
+  if has_systemd; then
+    sc start "$1"
+  else
+    su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/pg_ctl start -D $DATA_DIR -s -w -t 60"
+  fi
+}
+svc_stop(){
+  if has_systemd; then
+    sc stop "$1"
+  else
+    su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/pg_ctl stop -D $DATA_DIR -s -m fast"
+  fi
+}
+svc_is_active(){
+  if has_systemd; then
+    sc is-active --quiet "$1"
+  else
+    pgrep -f "$INSTALL_DIR/bin/postgres.*-D $DATA_DIR" >/dev/null 2>&1
+  fi
+}
+svc_status_dump(){ if has_systemd; then sc status "$1" -l --no-pager; fi; }
+svc_logs_tail(){
+  if has_systemd && has_cmd journalctl; then
+    journalctl -u "$1" -n 50 --no-pager
+  else
+    tail -n 100 "$LOG_DIR"/*.log 2>/dev/null || true
+  fi
+}
 
 die() {
     local msg="$1"; shift || true
@@ -48,7 +84,8 @@ handle_error() {
     echo "3. sudo -u ivorysql '${INSTALL_DIR}/bin/postgres -D ${DATA_DIR} -c logging_collector=on -c log_directory=${LOG_DIR}'"
     exit 1
 }
-trap 'handle_error ${LINENO} "${BASH_COMMAND}"' ERR
+
+trap 'handle_error ${LINENO} "$BASH_COMMAND"' ERR
 
 validate_config() {
     local key=$1 value=$2
@@ -387,6 +424,28 @@ install_dependencies() {
     esac
     STEP_SUCCESS  ""
 
+# Ensure pkg-config exists (needed by ICU detection)
+STEP_BEGIN  "Installpkg-config"
+case "$OS_TYPE" in
+    centos|rhel|almalinux|rocky|fedora|oracle)
+        $PKG_MANAGER install -y pkgconf-pkg-config || $PKG_MANAGER install -y pkgconfig || true
+        ;;
+    ubuntu|debian)
+        $PKG_MANAGER install -y pkg-config || true
+        ;;
+    opensuse*|sles)
+        $PKG_MANAGER install -y pkgconf-pkg-config || $PKG_MANAGER install -y pkg-config || true
+        ;;
+    arch)
+        pacman -S --noconfirm pkgconf || true
+        ;;
+esac
+if command -v pkg-config >/dev/null 2>&1; then
+    STEP_SUCCESS  "pkg-config: $(pkg-config --version)"
+else
+    STEP_WARNING  "pkg-config not found (will disable ICU and other features that require it)"
+fi
+
     STEP_BEGIN  "Installdependencies"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky|fedora|oracle)
@@ -693,18 +752,22 @@ compile_install() {
     # Configuration - enablereadline(ensureInstall)
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-readline"
     STEP_SUCCESS  "enablereadlinesupport"
-    
-    # DetectICU
-    icu_paths=("/usr/include/unicode/utypes.h" "/usr/include/icu.h")
-    if [[ -f "${icu_paths[0]}" || -f "${icu_paths[1]}" ]]; then
-        CONFIGURE_OPTS+=" --with-icu"
-        STEP_SUCCESS  "ICU development environment, enablesupport"
+
+# Detect ICU via pkg-config (robust across distros)
+if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists icu-uc icu-i18n; then
+    CONFIGURE_OPTS+=" --with-icu"
+    STEP_SUCCESS  "ICU (pkg-config) detected, enablesupport"
+else
+    CONFIGURE_OPTS+=" --without-icu"
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        STEP_WARNING  "pkg-config not found, disabled ICUsupport"
     else
-        CONFIGURE_OPTS+=" --without-icu"
-        STEP_WARNING  "ICUnot found, disabledICUsupport"
+        STEP_WARNING  "ICU .pc files not found, disabled ICUsupport"
     fi
-    
-    # XMLsupportConfiguration
+fi
+
+# XMLsupportConfiguration
+
     if [[ $XML_SUPPORT -eq 1 ]]; then
         CONFIGURE_OPTS+=" --with-libxml"
         STEP_SUCCESS  "XML, enablesupport"
@@ -766,7 +829,7 @@ post_install() {
     
     if [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
         STEP_BEGIN  "Cleardata directory"
-        systemctl stop ivorysql 2>/dev/null || true
+        svc_stop ivorysql 2>/dev/null || true
         rm -rf "${DATA_DIR:?}"/* "${DATA_DIR:?}"/.[^.]* "${DATA_DIR:?}"/..?* 2>/dev/null || true
         STEP_SUCCESS  "data directoryClear"
     else
@@ -817,9 +880,10 @@ EOF
     fi
     
     STEP_SUCCESS  ""
-    
+
     STEP_BEGIN  "ConfigurationsystemService"
-    cat > /etc/systemd/system/ivorysql.service <<EOF
+    if has_systemd; then
+        cat > /etc/systemd/system/ivorysql.service <<EOF
 [Unit]
 Description=IvorySQL Database Server
 Documentation=https://www.ivorysql.org
@@ -844,34 +908,50 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable ivorysql
-    STEP_SUCCESS  "ServiceConfiguration"
+        svc_daemon_reload
+        svc_enable ivorysql
+        STEP_SUCCESS  "ServiceConfiguration"
+    else
+        STEP_WARNING  "Systemd not detected, skip creating service unit"
+        cat > "$INSTALL_DIR/ivorysql-ctl" <<EOF
+#!/bin/bash
+PGDATA="$DATA_DIR"
+case "$1" in
+  start) "$INSTALL_DIR/bin/pg_ctl" start -D "\$PGDATA" -s -w -t 60 ;;
+  stop)  "$INSTALL_DIR/bin/pg_ctl" stop  -D "\$PGDATA" -s -m fast ;;
+  reload) "$INSTALL_DIR/bin/pg_ctl" reload -D "\$PGDATA" ;;
+  *) echo "Usage: \$0 {start|stop|reload}" ; exit 1 ;;
+esac
+EOF
+        chmod +x "$INSTALL_DIR/ivorysql-ctl"
+        STEP_SUCCESS  "Helper script created: $INSTALL_DIR/ivorysql-ctl"
+    fi
 }
+
 
 verify_installation() {
     CURRENT_STAGE "InstallValidate"
     
     STEP_BEGIN  "StartService"
-    systemctl start ivorysql || {
+    svc_start ivorysql || {
         STEP_FAIL  "ServiceStartFailed"
         echo  "======= Service ======="
-        systemctl status ivorysql -l --no-pager
+        svc_status_dump ivorysql
         echo  "======= log ======="
-        journalctl -u ivorysql -n 50 --no-pager
+        svc_logs_tail ivorysql
         exit 1
     }
     STEP_SUCCESS  "ServiceStartSuccess"
 
     STEP_BEGIN  "Service"
     for i in {1..15}; do
-        if systemctl is-active --quiet ivorysql; then
+        if svc_is_active ivorysql; then
             STEP_SUCCESS  "ServiceRunning"
             break
         fi
         [[ $i -eq 15 ]] && {
             STEP_FAIL  "ServiceStarttimed out"
-            journalctl -u ivorysql -n 100 --no-pager >&2
+            svc_logs_tail ivorysql >&2
             exit 1
         }
         sleep 1
@@ -879,7 +959,7 @@ verify_installation() {
     
     # Validateextension
     STEP_BEGIN  "Validateextension"
-    if sudo -u $SERVICE_USER $INSTALL_DIR/bin/psql -d postgres -c "SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'" | grep -q ivorysql_ora; then
+    if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -c \"SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'\"" | grep -q ivorysql_ora; then
         STEP_SUCCESS  "ivorysql_oraextensionSuccessLoad"
     else
         if [[ $XML_SUPPORT -eq 0 ]]; then
@@ -894,29 +974,45 @@ verify_installation() {
 }
 
 show_success_message() {
-    echo -e  "\n\033[32m================ Installation succeeded ================\033[0m"
+    echo -e "\n\033[32m================ Installation succeeded ================\033[0m"
+
+    local SERVICE_STATUS SERVICE_HELP LOG_FOLLOW
+    if has_systemd; then
+        if env PYTHONWARNINGS=ignore systemctl is-active --quiet ivorysql; then
+            SERVICE_STATUS="$(env PYTHONWARNINGS=ignore systemctl is-active ivorysql 2>/dev/null || echo "unknown")"
+        else
+            SERVICE_STATUS="inactive"
+        fi
+        SERVICE_HELP='systemctl [start|stop|status] ivorysql'
+        LOG_FOLLOW='journalctl -u ivorysql -f'
+    else
+        SERVICE_STATUS="(systemd not present; managed via pg_ctl helper)"
+        SERVICE_HELP="$INSTALL_DIR/ivorysql-ctl {start|stop|reload}"
+        LOG_FOLLOW="tail -f $LOG_DIR/*.log"
+    fi
+    # ----------------------------------------------------------------------
+
     cat <<EOF
-Installdirectory: $INSTALL_DIR
-data directory: $DATA_DIR
-log directory: $LOG_DIR
-Service: $(systemctl is-active ivorysql)
-version: $(${INSTALL_DIR}/bin/postgres --version)
+Install directory: $INSTALL_DIR
+Data directory: $DATA_DIR
+Log directory: $LOG_DIR
+Service: $SERVICE_STATUS
+Version: $(${INSTALL_DIR}/bin/postgres --version)
 
-:
-  systemctl [start|stop|status] ivorysql
-  journalctl -u ivorysql -f
-  sudo -u ivorysql '${INSTALL_DIR}/bin/psql'
+Useful commands:
+  $SERVICE_HELP
+  $LOG_FOLLOW
+  sudo -u $SERVICE_USER '${INSTALL_DIR}/bin/psql'
 
-Install: $(date)
-Install: $SECONDS
-
-Install: $TIMESTAMP
+Install time: $(date)
+Elapsed: ${SECONDS}s
+Build: ${TAG:-$BRANCH}   Commit: ${COMMIT_ID:-N/A}
 OS: $OS_TYPE $OS_VERSION
 EOF
-    if [[ $XML_SUPPORT -eq 0 ]]; then
-        echo -e  "\033[33mNote: XMLsupportnot enabled, \033[0m"
-    fi
+
+    [[ $XML_SUPPORT -eq 0 ]] && echo -e "\033[33mNote: XML support not enabled.\033[0m"
 }
+
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
@@ -939,4 +1035,3 @@ main() {
 }
 
 main "$@"
-
