@@ -98,7 +98,7 @@ validate_config() {
             
             if [[ -e "$value" ]]; then
                 if [[ -f "$value" ]]; then
-                    STEP_FAIL  "Configuration error: $key mustdirectorypath, Detectfile (current value: '$value')"
+                    STEP_FAIL  "Configuration error: $key must directorypath, Detectfile (current value: '$value')"
                 fi
                 
                 if ! [[ -w "$value" ]]; then
@@ -292,7 +292,7 @@ detect_environment() {
                     STEP_WARNING  "dnf, Usingyum"
                 fi
             else
-                STEP_FAIL  "supportversion: $RHEL_VERSION"
+                STEP_FAIL  "unsupport version: $RHEL_VERSION"
             fi
             ;;
             
@@ -303,10 +303,10 @@ detect_environment() {
             case "$OS_TYPE" in
                 ubuntu)
                     [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
-                    STEP_FAIL  "supportUbuntuversion: $OS_VERSION" ;;
+                    STEP_FAIL  "unsupport Ubuntuversion: $OS_VERSION" ;;
                 debian)
                     [[ $MAJOR_VERSION =~ ^(10|11|12)$ ]] || 
-                    STEP_FAIL  "supportDebianversion: $OS_VERSION" ;;
+                    STEP_FAIL  "unsupport Debianversion: $OS_VERSION" ;;
             esac
             
             PKG_MANAGER="apt-get"
@@ -317,9 +317,9 @@ detect_environment() {
             SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
             
             if [[ "$ID" == "opensuse-leap" ]]; then
-                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL  "supportopenSUSE Leapversion"
+                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL  "unsupport openSUSE Leapversion"
             elif [[ "$ID" == "sles" ]]; then
-                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL  "supportSLESversion"
+                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL  "unsupport SLESversion"
             else
                 STEP_FAIL  "UnknownSUSE"
             fi
@@ -896,11 +896,12 @@ User=$SERVICE_USER
 Group=$SERVICE_GROUP
 Environment=PGDATA=$DATA_DIR
 Environment=LD_LIBRARY_PATH=$INSTALL_DIR/lib:$INSTALL_DIR/lib/postgresql
+PIDFile=$DATA_DIR/postmaster.pid
 OOMScoreAdjust=-1000
-ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 60
+ExecStart=$INSTALL_DIR/bin/pg_ctl start -D \${PGDATA} -s -w -t 90
 ExecStop=$INSTALL_DIR/bin/pg_ctl stop -D \${PGDATA} -s -m fast
 ExecReload=$INSTALL_DIR/bin/pg_ctl reload -D \${PGDATA}
-TimeoutSec=60
+TimeoutSec=120
 Restart=on-failure
 RestartSec=5s
 
@@ -917,7 +918,7 @@ EOF
 #!/bin/bash
 PGDATA="$DATA_DIR"
 case "$1" in
-  start) "$INSTALL_DIR/bin/pg_ctl" start -D "\$PGDATA" -s -w -t 60 ;;
+  start) "$INSTALL_DIR/bin/pg_ctl" start -D "\$PGDATA" -s -w -t 90 ;;
   stop)  "$INSTALL_DIR/bin/pg_ctl" stop  -D "\$PGDATA" -s -m fast ;;
   reload) "$INSTALL_DIR/bin/pg_ctl" reload -D "\$PGDATA" ;;
   *) echo "Usage: \$0 {start|stop|reload}" ; exit 1 ;;
@@ -931,7 +932,7 @@ EOF
 
 verify_installation() {
     CURRENT_STAGE "InstallValidate"
-    
+
     STEP_BEGIN  "StartService"
     svc_start ivorysql || {
         STEP_FAIL  "ServiceStartFailed"
@@ -943,20 +944,60 @@ verify_installation() {
     }
     STEP_SUCCESS  "ServiceStartSuccess"
 
+    
+    get_pgport() {
+        
+        local pidf="$DATA_DIR/postmaster.pid"
+        [[ -r "$pidf" ]] && awk 'NR==4{print;exit}' "$pidf" || echo 5432
+    }
+
+    db_is_ready() {
+        local port sock_dir
+        port="$(get_pgport)"
+
+        
+        su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/pg_ctl status -D '$DATA_DIR'" >/dev/null 2>&1 \
+          && return 0
+
+       
+        grep -qs "database system is ready to accept connections" "$LOG_DIR"/*.log 2>/dev/null \
+          && return 0
+
+       
+        for sock_dir in /tmp /var/run/postgresql; do
+            [[ -S "${sock_dir}/.s.PGSQL.${port}" ]] && return 0
+        done
+
+        
+        if [[ -x "$INSTALL_DIR/bin/pg_isready" ]]; then
+            su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/pg_isready -q -h /tmp -p $port -t 1" >/dev/null 2>&1 \
+              && return 0
+            su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/pg_isready -q -h 127.0.0.1 -p $port -t 1" >/dev/null 2>&1 \
+              && return 0
+        fi
+
+        return 1
+    }
+
     STEP_BEGIN  "Service"
-    for i in {1..15}; do
-        if svc_is_active ivorysql; then
+    
+    ready=0
+    for i in $(seq 1 90); do
+        if svc_is_active ivorysql || db_is_ready; then
             STEP_SUCCESS  "ServiceRunning"
+            ready=1
             break
         fi
-        [[ $i -eq 15 ]] && {
-            STEP_FAIL  "ServiceStarttimed out"
-            svc_logs_tail ivorysql >&2
-            exit 1
-        }
         sleep 1
     done
-    
+
+    if [[ "$ready" -ne 1 ]]; then
+        STEP_FAIL  "ServiceStartTimedOut"
+        svc_status_dump ivorysql
+        svc_logs_tail ivorysql >&2
+        exit 1
+    fi
+
     # Validateextension
     STEP_BEGIN  "Validateextension"
     if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -c \"SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'\"" | grep -q ivorysql_ora; then
@@ -968,10 +1009,11 @@ verify_installation() {
             STEP_WARNING  "ivorysql_oraextensionLoad, Checklog"
         fi
     fi
-    
+
     # Success
     show_success_message
 }
+
 
 show_success_message() {
     echo -e "\n\033[32m================ Installation succeeded ================\033[0m"
