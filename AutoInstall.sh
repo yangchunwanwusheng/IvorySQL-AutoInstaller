@@ -1079,7 +1079,6 @@ Build: ${TAG:-$BRANCH}   Commit: ${COMMIT_ID:-N/A}
 OS: $OS_TYPE $OS_VERSION
 EOF
 
-    [[ $XML_SUPPORT -eq 0 ]] && echo -e "\033[33mNote: XML support not enabled.\033[0m"
 }
 
 
