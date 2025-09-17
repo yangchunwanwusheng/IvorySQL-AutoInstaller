@@ -1,5 +1,7 @@
 #!/bin/bash
 set -eo pipefail
+# Ensure ERR trap inherits into functions/subshells
+set -E
 
 # Non-interactive mode: set to 1 to skip all read -p confirmations
 NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
@@ -9,7 +11,9 @@ OS_TYPE=""
 OS_VERSION=""
 XML_SUPPORT=0  
 
+LAST_STAGE=""
 CURRENT_STAGE() {
+    LAST_STAGE="$1"
     echo -e "\n\033[34m[$(date '+%H:%M:%S')] $1\033[0m"
 }
 
@@ -22,13 +26,35 @@ STEP_SUCCESS() {
 }
 
 STEP_FAIL() {
-    echo -e "  \033[31m✗ $1\033[0m" >&2
+    local msg="$1"
+    echo -e "  \033[31m✗ ${msg}\033[0m" >&2
+    [[ -n "$LAST_STAGE" ]] && echo "  Stage : ${LAST_STAGE}" >&2
+    dba_hint
+    echo -e "  Exiting." >&2
     exit 1
 }
 
 STEP_WARNING() {
     echo -e "  \033[33m⚠ $1\033[0m"
 }
+
+# Short DBA-oriented troubleshooting checklist (English only)
+dba_hint() {
+    local log_hint
+    if [[ -n "$LOG_DIR" ]]; then
+        log_hint="${LOG_DIR}/error_${TIMESTAMP}.log"
+    else
+        log_hint="(Log directory not initialized; if redirection is enabled, check error_${TIMESTAMP}.log under the install directory)"
+    fi
+    echo "—— Troubleshooting ———————————————————————————————" >&2
+    echo "1) Service status: systemctl status ivorysql" >&2
+    echo "2) Recent logs   : journalctl -u ivorysql --no-pager | tail -n 80" >&2
+    echo "3) Install log   : ${log_hint}" >&2
+    echo "4) Connectivity  : pg_isready -h 127.0.0.1 -p ${PGPORT:-5432}" >&2
+    echo "5) Directory ACL : ls -ld \"${DATA_DIR}\" && ls -l \"${DATA_DIR}\"" >&2
+    echo "———————————————————————————————————————————————" >&2
+}
+
 
 # ---- helpers added (service detection and wrappers) ----
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -70,18 +96,20 @@ svc_logs_tail(){
 
 die() {
     local msg="$1"; shift || true
-    echo -e "[31m✗ ${msg}[0m" >&2
-    [[ $# -gt 0 ]] && echo -e "$*" >&2
-    exit 1
+    STEP_FAIL "${msg}"
 }
 handle_error() {
-    local line=$1 command=$2
-    STEP_FAIL  "Installation failed！: ${line} \n: ${command}"
-    echo  "logPlease see: ${LOG_DIR}/error_${TIMESTAMP}.log"
-    echo  "Please run the following commands to troubleshoot:"
-    echo "1. systemctl status ivorysql.service"
-    echo "2. journalctl -xe"
-    echo "3. sudo -u ivorysql '${INSTALL_DIR}/bin/postgres -D ${DATA_DIR} -c logging_collector=on -c log_directory=${LOG_DIR}'"
+    local line="$1"
+    local cmd="$2"
+
+    echo -e "\033[31m✗ Installation failed\033[0m" >&2
+    [[ -n "$LAST_STAGE" ]] && echo "Stage : ${LAST_STAGE}" >&2
+    echo "Line  : ${line}" >&2
+    echo "Command: ${cmd}" >&2
+
+    dba_hint
+
+    echo "Exiting." >&2
     exit 1
 }
 
@@ -178,73 +206,73 @@ validate_config() {
 }
 
 load_config() {
-    CURRENT_STAGE "Configuration Load"
+    CURRENT_STAGE "Load configuration"
     
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 CONFIG_FILE="${SCRIPT_DIR}/ivorysql.conf"
 
-STEP_BEGIN  "Check Configuration file"
+STEP_BEGIN  "Checking configuration file"
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        STEP_FAIL  "Configuration file $CONFIG_FILE , Please ensure 'ivorysql.conf' directory"
+        STEP_FAIL  "Configuration file not found: $CONFIG_FILE. Ensure 'ivorysql.conf' exists in the script directory."
     fi
-STEP_SUCCESS  "Configuration file"
+STEP_SUCCESS  "Configuration file detected"
 
-STEP_BEGIN  "Load Configuration file"
+STEP_BEGIN  "Loading configuration file"
 if grep -Evq '^\s*([A-Z_][A-Z0-9_]*\s*=\s*.*|#|$)' "$CONFIG_FILE"; then
-    STEP_FAIL  "Configuration completed. file includes support( KEY=VALUE, , )"
+    STEP_FAIL  "Invalid configuration format: only KEY=VALUE pairs and comments are allowed."
 fi
-source "$CONFIG_FILE" || STEP_FAIL  "Load Configuration file found $CONFIG_FILE, Check fileformat"
-STEP_SUCCESS  "Configuration file Load Success"
+source "$CONFIG_FILE" || STEP_FAIL  "Failed to load configuration file: $CONFIG_FILE. Check file format."
+STEP_SUCCESS  "Configuration loaded"
     
-    STEP_BEGIN  "Validate Configuration"
+    STEP_BEGIN  "Validating configuration"
     declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL" "LOG_DIR")
     for var in "${required_vars[@]}"; do
-        [[ -z "${!var}" ]] && STEP_FAIL  "Configuration missing: $var"
+        [[ -z "${!var}" ]] && STEP_FAIL  "Missing required configuration: $var"
     done
-    STEP_SUCCESS  "Configuration Validate"
+    STEP_SUCCESS  "Configuration validated"
     
     if [[ -z "$TAG" && -z "$BRANCH" ]]; then
-        STEP_FAIL  "must TAG BRANCH"
+        STEP_FAIL  "Specify either TAG or BRANCH."
     elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
-        STEP_WARNING  "TAG BRANCH, will prefer TAG($TAG)"
+        STEP_WARNING  "Both TAG and BRANCH provided; TAG ($TAG) will take precedence."
     fi
     
-    STEP_BEGIN  "Check Configuration"
+    STEP_BEGIN  "Checking configuration values"
     while IFS='=' read -r key value; do
         [[ $key =~ ^[[:space:]]*# || -z $key ]] && continue
         key=$(echo $key | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         validate_config "$key" "$value"
     done < "$CONFIG_FILE"
-    STEP_SUCCESS  "Configuration Validate"
+    STEP_SUCCESS  "Configuration validated"
 }
 
 init_logging() {
-    CURRENT_STAGE "log"
+    CURRENT_STAGE "Logging"
     
-    STEP_BEGIN  "Create log directory"
-    mkdir -p "$LOG_DIR" || STEP_FAIL  "Create log directory $LOG_DIR"
+    STEP_BEGIN  "Creating log directory"
+    mkdir -p "$LOG_DIR" || STEP_FAIL  "Failed to create log directory: $LOG_DIR"
     
     if id -u "$SERVICE_USER" &>/dev/null && getent group "$SERVICE_GROUP" &>/dev/null; then
-        chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR" || STEP_WARNING  "log directorypermissionFailed, Install"
-        STEP_SUCCESS  "log directory Create permission"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_DIR" || STEP_WARNING  "Failed to set ownership on log directory (continuing)."
+        STEP_SUCCESS  "Log directory ownership set"
     else
-        STEP_WARNING  "user/group, permission"
-        STEP_SUCCESS  "log directory Create"
+        STEP_WARNING  "Service user or group not found; skipping ownership (continuing)."
+        STEP_SUCCESS  "Log directory created"
     fi
     
-    STEP_BEGIN  "redirectionoutput streams"
+    STEP_BEGIN  "Redirecting output streams to log files"
     exec > >(tee -a "${LOG_DIR}/install_${TIMESTAMP}.log")
     exec 2> >(tee -a "${LOG_DIR}/error_${TIMESTAMP}.log" >&2)
-    STEP_SUCCESS  "logredirection"
+    STEP_SUCCESS  "Log redirection configured"
 }
 
 check_root() {
-    CURRENT_STAGE "permission Check"
+    CURRENT_STAGE "Privilege check"
     
-    STEP_BEGIN  "Validate user permission"
+    STEP_BEGIN  "Validating privileges"
     [[ "$(id -u)" -ne 0 ]] && { 
-        STEP_FAIL  "mustUsingrootpermission"
+        STEP_FAIL  "Root privileges are required."
         echo -e  "Please run: \033[33msudo"$0" "$@"\033[0m" >&2
         exit 1
     }
@@ -252,47 +280,47 @@ check_root() {
 }
 
 detect_environment() {
-    CURRENT_STAGE "system Detect"
+    CURRENT_STAGE "Detect system"
     
     get_major_version() {
         grep -Eo 'VERSION_ID="?[0-9.]+' /etc/os-release | 
         cut -d= -f2 | tr -d '"' | cut -d. -f1
     }
 
-    STEP_BEGIN  "OS"
-    [[ ! -f /etc/os-release ]] && STEP_FAIL  "OS"
+    STEP_BEGIN  "Detecting operating system"
+    [[ ! -f /etc/os-release ]] && STEP_FAIL  "Unable to detect operating system (missing /etc/os-release)."
     source /etc/os-release
     
     OS_TYPE="$ID"
     OS_VERSION="$VERSION_ID"
     
     PKG_MANAGER=""
-    STEP_SUCCESS  "DetectOS: $PRETTY_NAME"
+    STEP_SUCCESS  "Detected OS: $PRETTY_NAME"
     
     # Special handling for Oracle Linux
     if [[ -f /etc/oracle-release ]]; then
         OS_TYPE="oracle"
         ORACLE_VERSION=$(grep -oE '([0-9]+)\.?([0-9]+)?' /etc/oracle-release | head -1)
-        STEP_SUCCESS  "Detect Oracle Linux $ORACLE_VERSION"
+        STEP_SUCCESS  "Detected Oracle Linux $ORACLE_VERSION"
     fi
     
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky|fedora|oracle)
             RHEL_VERSION=$(get_major_version)
-            [[ -z $RHEL_VERSION ]] && STEP_FAIL  "Fetchversion"
+            [[ -z $RHEL_VERSION ]] && STEP_FAIL  "Failed to detect major version"
             
             if [[ $RHEL_VERSION -eq 7 ]]; then
-                STEP_FAIL  "CentOS/RHEL 7Please runYUMInstall"
+                STEP_FAIL  "CentOS/RHEL 7 is not supported by this script."
             elif [[ $RHEL_VERSION =~ ^(8|9|10)$ ]]; then
                 if command -v dnf &>/dev/null; then
                     PKG_MANAGER="dnf"
                     STEP_SUCCESS  "Using package manager: dnf"
                 else
                     PKG_MANAGER="yum"
-                    STEP_WARNING  "dnf, Usingyum"
+                    STEP_WARNING  "dnf not available; falling back to yum"
                 fi
             else
-                STEP_FAIL  "unsupport version: $RHEL_VERSION"
+                STEP_FAIL  "Unsupported version: $RHEL_VERSION"
             fi
             ;;
             
@@ -303,10 +331,10 @@ detect_environment() {
             case "$OS_TYPE" in
                 ubuntu)
                     [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
-                    STEP_FAIL  "unsupport Ubuntuversion: $OS_VERSION" ;;
+                    STEP_FAIL  "Unsupported Ubuntu version: $OS_VERSION" ;;
                 debian)
                     [[ $MAJOR_VERSION =~ ^(10|11|12)$ ]] || 
-                    STEP_FAIL  "unsupport Debianversion: $OS_VERSION" ;;
+                    STEP_FAIL  "Unsupported Debian version: $OS_VERSION" ;;
             esac
             
             PKG_MANAGER="apt-get"
@@ -317,11 +345,11 @@ detect_environment() {
             SLE_VERSION=$(grep -Po '(?<=VERSION_ID=")[0-9.]+' /etc/os-release)
             
             if [[ "$ID" == "opensuse-leap" ]]; then
-                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL  "unsupport openSUSE Leapversion"
+                [[ $SLE_VERSION =~ ^15 ]] || STEP_FAIL  "Unsupported openSUSE Leap version"
             elif [[ "$ID" == "sles" ]]; then
-                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL  "unsupport SLESversion"
+                [[ $SLE_VERSION =~ ^(12\.5|15) ]] || STEP_FAIL  "Unsupported SLES version"
             else
-                STEP_FAIL  "UnknownSUSE"
+                STEP_FAIL  "Unknown SUSE variant"
             fi
             
             PKG_MANAGER="zypper"
@@ -330,15 +358,15 @@ detect_environment() {
             
         arch)
             PKG_MANAGER="pacman"
-            STEP_SUCCESS  "Arch Linux support" ;;
+            STEP_SUCCESS  "Detected Arch Linux" ;;
             
         *)
             if [[ -f /etc/redhat-release ]]; then
-                STEP_FAIL  "UnknownRHEL"
+                STEP_FAIL  "Unrecognized RHEL-like distribution"
             elif [[ -f /etc/debian_version ]]; then
-                STEP_FAIL  "UnknownDebian"
+                STEP_FAIL  "Unrecognized Debian-like distribution"
             else
-                STEP_FAIL  "Linux"
+                STEP_FAIL  "Unsupported Linux distribution"
             fi
             ;;
     esac
@@ -364,49 +392,49 @@ install_dependencies() {
         [arch_libxml]="libxml2"
     )
 
-    STEP_BEGIN  ""
+    STEP_BEGIN  "Refreshing package metadata"
     case "$OS_TYPE" in
         centos|rhel|almalinux|rocky|fedora|oracle)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
             
             # EL10-specific handling - enhanced XML library installation
             if [[ $RHEL_VERSION -eq 10 ]]; then
-                STEP_BEGIN  "EL10: enable CRB repo; install XML development library."
+                STEP_BEGIN  "EL10: enabling CRB repo and installing XML development library"
                 if [[ "$OS_TYPE" == "rocky" ]]; then
                     # Ensure CRB repository is enabled
                     if ! $PKG_MANAGER config-manager --set-enabled crb 2>/dev/null; then
-                        STEP_WARNING  "enableCRBrepository, tryUsingDevelrepository"
+                        STEP_WARNING  "Failed to enable CRB; trying devel repository"
                         $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
                     fi
                     
                     # Explicitly attempt to install libxml2-devel
                     if $PKG_MANAGER install -y libxml2-devel; then
                         XML_SUPPORT=1
-                        STEP_SUCCESS  "Success Install libxml2-devel, enabling XML support"
+                        STEP_SUCCESS  "Installed libxml2-devel; enabling XML support"
                     else
                         # Try alternative package names
-                        STEP_BEGIN  "tryXML"
+                        STEP_BEGIN  "Attempting alternative XML package name"
                         if $PKG_MANAGER install -y libxml2-dev; then
                             XML_SUPPORT=1
-                            STEP_SUCCESS  "Success Install libxml2-dev, enabling XML support"
+                            STEP_SUCCESS  "Installed libxml2-dev; enabling XML support"
                         else
                             XML_SUPPORT=0
-                            STEP_WARNING  "Failed to Install XML development library, XML support disabled."
+                            STEP_WARNING  "Failed to install XML development library; XML support disabled."
                         fi
                     fi
                 elif [[ "$OS_TYPE" == "oracle" ]]; then
                     # Oracle Linux 10 specific repo handling
-                    STEP_BEGIN  "enableOracle Linux 10repository"
+                    STEP_BEGIN  "Oracle Linux 10: enabling additional repositories"
                     if $PKG_MANAGER repolist | grep -q "ol10_developer"; then
                         $PKG_MANAGER config-manager --enable ol10_developer || true
                     elif $PKG_MANAGER repolist | grep -q "ol10_addons"; then
                         $PKG_MANAGER config-manager --enable ol10_addons || true
                     fi
-                    STEP_SUCCESS  "Repository configuration updated."
+                    STEP_SUCCESS  "Repository configuration updated"
                 else
                     $PKG_MANAGER config-manager --set-enabled codeready-builder || true
                 fi
-                STEP_SUCCESS  "Repository configuration updated."
+                STEP_SUCCESS  "Repository configuration updated"
             fi
             
             $PKG_MANAGER update -y || true
@@ -425,7 +453,7 @@ install_dependencies() {
     STEP_SUCCESS  ""
 
 # Ensure pkg-config exists (needed by ICU detection)
-STEP_BEGIN  "Install pkg-config"
+STEP_BEGIN  "Installing pkg-config"
 case "$OS_TYPE" in
     centos|rhel|almalinux|rocky|fedora|oracle)
         $PKG_MANAGER install -y pkgconf-pkg-config || $PKG_MANAGER install -y pkgconfig || true
@@ -441,9 +469,9 @@ case "$OS_TYPE" in
         ;;
 esac
 if command -v pkg-config >/dev/null 2>&1; then
-    STEP_SUCCESS  "pkg-config: $(pkg-config --version)"
+    STEP_SUCCESS  "pkg-config installed: $(pkg-config --version)"
 else
-    STEP_WARNING  "pkg-config not found (will disable ICU and other features that require it)"
+    STEP_WARNING  "pkg-config not found; ICU and related features will be disabled."
 fi
 
     STEP_BEGIN  "Install dependencies"
@@ -465,18 +493,18 @@ fi
             fi
             
             # Force install readline-devel
-            STEP_BEGIN  "Install readline"
-            $PKG_MANAGER install -y readline-devel || STEP_FAIL  "readline-devel Installation failed, must Install readline"
-            STEP_SUCCESS  "readline Installation succeeded"
+            STEP_BEGIN  "Installing readline"
+            $PKG_MANAGER install -y readline-devel || STEP_FAIL  "Failed to install readline-devel (required dependency)."
+            STEP_SUCCESS  "Readline installation succeeded"
             
             # Special handling: ensure XML development library is installed (for non-EL10 or EL10 cases not covered above)
             if [[ $XML_SUPPORT -eq 0 && $RHEL_VERSION -ne 10 ]]; then
-                STEP_BEGIN  "InstallXMLdevelopment library"
+                STEP_BEGIN  "Installing XML development library"
                 if $PKG_MANAGER install -y ${OS_SPECIFIC_DEPS[libxml_dep]}; then
                     XML_SUPPORT=1
-                    STEP_SUCCESS  "XML development library Installation succeeded"
+                    STEP_SUCCESS  "XML development library installation succeeded"
                 else
-                    STEP_WARNING  "XML development libraryI nstallation failed, XML support disabled."
+                    STEP_WARNING  "XML development library installation failed; XML support disabled."
                 fi
             fi
             
@@ -487,9 +515,9 @@ fi
             ;;
         ubuntu|debian)
             # Force install libreadline-dev
-            STEP_BEGIN  "Install libreadline-dev"
-            $PKG_MANAGER install -y libreadline-dev || STEP_FAIL  "libreadline-devInstallation failed, mustInstallreadline"
-            STEP_SUCCESS  "readline Installation succeeded"
+            STEP_BEGIN  "Installing libreadline-dev"
+            $PKG_MANAGER install -y libreadline-dev || STEP_FAIL  "Failed to install libreadline-dev (required dependency)."
+            STEP_SUCCESS  "Readline installation succeeded"
             
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[debian_tools]} \
@@ -499,9 +527,9 @@ fi
             ;;
         opensuse*|sles)
             # Force install readline-devel
-            STEP_BEGIN  "Install readline-devel"
-            $PKG_MANAGER install -y readline-devel || STEP_FAIL  "readline-develInstallation failed, mustInstallreadline"
-            STEP_SUCCESS  "readline Installation succeeded"
+            STEP_BEGIN  "Installing readline-devel"
+            $PKG_MANAGER install -y readline-devel || STEP_FAIL  "Failed to install readline-devel (required dependency)."
+            STEP_SUCCESS  "Readline installation succeeded"
             
             $PKG_MANAGER install -y \
                 ${OS_SPECIFIC_DEPS[suse_tools]} \
@@ -511,9 +539,9 @@ fi
             ;;
         arch)
             # Force install readline
-            STEP_BEGIN  "Install readline"
+            STEP_BEGIN  "Installing readline"
             pacman -S --noconfirm readline || STEP_FAIL  "readlineInstallation failed, mustInstallreadline"
-            STEP_SUCCESS  "readline Installation succeeded"
+            STEP_SUCCESS  "Readline installation succeeded"
             
             pacman -S --noconfirm \
                 ${OS_SPECIFIC_DEPS[arch_base]} \
@@ -521,7 +549,7 @@ fi
                 ${OS_SPECIFIC_DEPS[arch_libxml]} || true
             ;;
     esac
-    STEP_SUCCESS  "dependencies Installation completed"
+    STEP_SUCCESS  "System dependencies installed"
 
     # Install required Perl modules
     STEP_BEGIN  "Install Perl modules"
@@ -532,13 +560,13 @@ fi
             
             # Try installing IPC-Run
             if ! $PKG_MANAGER install -y perl-IPC-Run 2>/dev/null; then
-                STEP_WARNING  "perl-IPC-Run not in repo; try CPAN Install"
+                STEP_WARNING  "perl-IPC-Run not available in repo; trying CPAN"
                 # Use CPAN to install missing modules
                 PERL_MM_USE_DEFAULT=1 cpan -i IPC::Run FindBin || {
-                    STEP_WARNING  "CPAN Installation failed, try cpanm."
+                    STEP_WARNING  "CPAN installation failed; trying cpanm"
                     # If CPAN is unavailable, try cpanm
                     curl -L https://cpanmin.us | perl - App::cpanminus || true
-                    cpanm IPC::Run FindBin || STEP_WARNING  "Perl modulesInstall"
+                    cpanm IPC::Run FindBin || STEP_WARNING  "Failed to install Perl modules (continuing)."
                 }
             fi
             ;;
@@ -552,53 +580,53 @@ fi
             pacman -S --noconfirm perl-ipc-run || true
             ;;
     esac
-    STEP_SUCCESS  "Perl modules Installation completed"
+    STEP_SUCCESS  "Perl modules installed"
 
-    STEP_BEGIN  "Validate Build"
+    STEP_BEGIN  "Validating build prerequisites"
     for cmd in gcc make flex bison; do
         if ! command -v $cmd >/dev/null 2>&1; then
-            STEP_WARNING  "missing: $cmd (will tryBuild)"
+            STEP_WARNING  "Missing dependency: $cmd (build may fail)"
         else
-            echo  "Detect $cmd: $(command -v $cmd)"
+            echo  "Found $cmd: $(command -v $cmd)"
         fi
     done
     
     if ! command -v perl >/dev/null 2>&1; then
-        STEP_WARNING  "Warning: Perl interpreternot found. Build may fail."
+        STEP_WARNING  "Perl interpreter not found; build may fail."
     else
-        echo  "Detect Perl: $(command -v perl)"
+        echo  "Found Perl: $(command -v perl)"
         echo  "Perl version: $(perl --version | head -n 2 | tail -n 1)"
     fi
     
     # Enhanced XML support detection
-    STEP_BEGIN  "Detect XML support"
+    STEP_BEGIN  "Detecting XML support"
     if [[ -f /usr/include/libxml2/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
         XML_SUPPORT=1
-        STEP_SUCCESS  "XML development library found, will enable XML support"
+        STEP_SUCCESS  "XML development headers found; enabling XML support"
     else
         XML_SUPPORT=0
-        STEP_WARNING  "XML development library not found, Install XML"
+        STEP_WARNING  "XML development headers not found; consider installing libxml2-devel/libxml2-dev."
     fi
     
     # ensureLibXML2development library - Rocky Linux 10
     if [[ $XML_SUPPORT -eq 0 ]]; then
-        STEP_BEGIN  "try Install LibXML2"
+        STEP_BEGIN  "Attempting to install libxml2 development headers"
         case "$OS_TYPE" in
             centos|rhel|almalinux|rocky|oracle)
                 # Rocky Linux 10, UsingInstall
                 if [[ "$OS_TYPE" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
-                    STEP_BEGIN  "Rocky Linux 10trymultiple methodsInstalllibxml2-devel"
+                    STEP_BEGIN  "Rocky Linux 10: trying multiple methods to install libxml2-devel"
                     # 1: tryenableCRBrepositoryInstall
                     $PKG_MANAGER config-manager --set-enabled crb 2>/dev/null || true
                     if $PKG_MANAGER install -y libxml2-devel; then
                         XML_SUPPORT=1
-                        STEP_SUCCESS  "Installed libxml2-devel via CRB Repository cloned.."
+                        STEP_SUCCESS  "Installed libxml2-devel via CRB repository"
                     else
                         # 2: tryenableDevelrepository
                         $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
                         if $PKG_MANAGER install -y libxml2-devel; then
                             XML_SUPPORT=1
-                            STEP_SUCCESS "Installed libxml2-devel via devel Repository cloned.."
+                            STEP_SUCCESS  "Installed libxml2-devel via devel repository"
                         else
                             # 3: tryUsingdnf--allowerasing
                             if $PKG_MANAGER install -y --allowerasing libxml2-devel; then
@@ -606,7 +634,7 @@ fi
                                 STEP_SUCCESS  "Installed libxml2-devel with --allowerasing."
                             else
                                 XML_SUPPORT=0
-                                STEP_WARNING  "Install libxml2-devel Failed"
+                                STEP_WARNING  "Failed to install libxml2-devel"
                             fi
                         fi
                     fi
@@ -629,41 +657,41 @@ fi
         # Check
         if [[ -f /usr/include/libxml2/libxml/parser.h || -f /usr/include/libxml/parser.h ]]; then
             XML_SUPPORT=1
-            STEP_SUCCESS  "XML development library Installation succeeded, enable XML support"
+            STEP_SUCCESS  "XML development headers installed; enabling XML support"
         else
             XML_SUPPORT=0
-            STEP_WARNING  "XML development library Installation failed, will disable XML support"
+            STEP_WARNING  "XML development headers not installed; XML support disabled"
         fi
     fi
-    STEP_SUCCESS  "Build completed. environment validated"
+    STEP_SUCCESS  "Build environment validated"
 }
 
 setup_user() {
-    CURRENT_STAGE "Configure System User and Group"
+    CURRENT_STAGE "Configure service user and group"
     
-    STEP_BEGIN  "Createusergroup"
+    STEP_BEGIN  "Creating service group"
     if ! getent group "$SERVICE_GROUP" &>/dev/null; then
-        groupadd "$SERVICE_GROUP" || STEP_FAIL  "usergroupCreateFailed"
-        STEP_SUCCESS  "usergroup Create: $SERVICE_GROUP"
+        groupadd "$SERVICE_GROUP" || STEP_FAIL  "Failed to create group: $SERVICE_GROUP"
+        STEP_SUCCESS  "Group created: $SERVICE_GROUP"
     else
-        STEP_SUCCESS  "usergroup: $SERVICE_GROUP"
+        STEP_SUCCESS  "Group exists: $SERVICE_GROUP"
     fi
 
-    STEP_BEGIN  "Createuser"
+    STEP_BEGIN  "Creating service user"
     if ! id -u "$SERVICE_USER" &>/dev/null; then
-        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || STEP_FAIL  "userCreateFailed"
-        STEP_SUCCESS  "user Create: $SERVICE_USER"
+        useradd -r -g "$SERVICE_GROUP" -s "/bin/bash" -m -d "/home/$SERVICE_USER" "$SERVICE_USER" || STEP_FAIL  "Failed to create user: $SERVICE_USER"
+        STEP_SUCCESS  "User created: $SERVICE_USER"
     else
-        STEP_SUCCESS  "user: $SERVICE_USER"
+        STEP_SUCCESS  "User exists: $SERVICE_USER"
     fi
 }
 
 compile_install() {
-    CURRENT_STAGE "BuildInstall"
+    CURRENT_STAGE "Build and install"
     
     local repo_dir
     repo_dir="$(basename "$REPO_URL" .git)"
-    STEP_BEGIN  "Fetch Repository cloned."
+    STEP_BEGIN  "Fetching repository"
     if [[ ! -d "$repo_dir" ]]; then
         git_clone_cmd="git clone"
         
@@ -677,43 +705,43 @@ compile_install() {
         
         git_clone_cmd+=" --progress $REPO_URL"
         
-        echo  ": $git_clone_cmd"
+        echo  "Clone command: $git_clone_cmd"
         # retry
         for i in {1..3}; do
             if $git_clone_cmd; then
                 break
             fi
             if [[ $i -eq 3 ]]; then
-                STEP_FAIL  "Clone failed; check Repository cloned. URL and network."
+                STEP_FAIL  "Clone failed; check repository URL and network connectivity."
             fi
-            STEP_WARNING  "Retry $i/3 failed; waiting 10s before retry."
+            STEP_WARNING  "Retry $i/3 failed; waiting 10 seconds before retry."
             sleep 10
         done
-        STEP_SUCCESS  "repository"
+        STEP_SUCCESS  "Repository cloned"
     else
-        STEP_SUCCESS  "repository: $repo_dir"
+        STEP_SUCCESS  "Repository directory exists: $repo_dir"
     fi
-    cd "$repo_dir" || STEP_FAIL  "initdb failed. to enter directory: $repo_dir"
+    cd "$repo_dir" || STEP_FAIL  "Failed to enter directory: $repo_dir"
     
     if [[ -n "$TAG" ]]; then
-        STEP_BEGIN  "Validate tag ($TAG)"
-        git checkout "tags/$TAG" || STEP_FAIL  "initdb failed. to switch to tag: $TAG"
+        STEP_BEGIN  "Validating tag ($TAG)"
+        git checkout "tags/$TAG" || STEP_FAIL  "Failed to switch to tag: $TAG"
         COMMIT_ID=$(git rev-parse --short HEAD)
         STEP_SUCCESS  "tag $TAG (commit: $COMMIT_ID)"
     else
-        STEP_BEGIN  "Switch branch ($BRANCH)"
+        STEP_BEGIN  "Switching to branch ($BRANCH)"
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
-            git reset --hard || STEP_WARNING  "Reset branch failed (continuing)."
-            git clean -fd || STEP_WARNING  "Operation failed (continuing)."
-            git checkout "$BRANCH" --progress || STEP_FAIL  "initdb failed. to switch to On branch: $BRANCH"
-            git pull origin "$BRANCH" --progress || STEP_WARNING  "Operation failed (continuing)."
-            STEP_SUCCESS  "Switched to On branch: $BRANCH"
+            git reset --hard || STEP_WARNING  "Failed to reset branch (continuing)."
+            git clean -fd || STEP_WARNING  "Failed to clean working tree (continuing)."
+            git checkout "$BRANCH" --progress || STEP_FAIL  "Failed to switch to branch: $BRANCH"
+            git pull origin "$BRANCH" --progress || STEP_WARNING  "Failed to pull latest commits (continuing)."
+            STEP_SUCCESS  "Switched to branch: $BRANCH"
         else
-            STEP_SUCCESS  "branch: $BRANCH"
+            STEP_SUCCESS  "On branch: $BRANCH"
         fi
         COMMIT_ID=$(git rev-parse --short HEAD)
-        STEP_SUCCESS  "version: $COMMIT_ID"
+        STEP_SUCCESS  "Commit: $COMMIT_ID"
     fi
     
     # Validate Perl
@@ -748,21 +776,21 @@ compile_install() {
     done
     STEP_SUCCESS  "Perl environment validated"
     
-    STEP_BEGIN  "Configuration Build"
+    STEP_BEGIN  "Configuring build options"
     # Configuration - enablereadline(ensureInstall)
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-readline"
-    STEP_SUCCESS  "Readline support enabled."
+    STEP_SUCCESS  "Readline support enabled"
 
 # Detect ICU via pkg-config (robust across distros)
 if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists icu-uc icu-i18n; then
     CONFIGURE_OPTS+=" --with-icu"
-    STEP_SUCCESS  "ICU (pkg-config) detected, enabling support"
+    STEP_SUCCESS  "ICU detected via pkg-config; enabling support"
 else
     CONFIGURE_OPTS+=" --without-icu"
     if ! command -v pkg-config >/dev/null 2>&1; then
         STEP_WARNING  "pkg-config not found; ICU support disabled."
     else
-        STEP_WARNING "ICU .pc files not found; ICU support disabled."
+        STEP_WARNING  "ICU .pc files not found; ICU support disabled."
     fi
 fi
 
@@ -770,7 +798,7 @@ fi
 
     if [[ $XML_SUPPORT -eq 1 ]]; then
         CONFIGURE_OPTS+=" --with-libxml"
-        STEP_SUCCESS  "XML, enablesupport"
+        STEP_SUCCESS  "XML support enabled"
     else
         CONFIGURE_OPTS+=" --without-libxml"
         STEP_WARNING  "libxml2 development files not found; XML support disabled."
@@ -783,7 +811,7 @@ fi
         STEP_SUCCESS  "TCL development headers found, enabling support"
     else
         CONFIGURE_OPTS+=" --without-tcl"
-        STEP_WARNING  "Tcl development headers not found; Tcl extension disabled."
+        STEP_WARNING  "Tcl development headers not found; Tcl support disabled."
     fi
     
     # DetectPerl
@@ -792,7 +820,7 @@ fi
         perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
         if [[ -n "$perl_header" ]]; then
             CONFIGURE_OPTS+=" --with-perl"
-            STEP_SUCCESS  "Perl development environment, enabling support"
+            STEP_SUCCESS  "Perl development headers found; enabling support"
         else
             CONFIGURE_OPTS+=" --without-perl"
             STEP_WARNING  "perl.h not found; Perl support disabled."
@@ -802,44 +830,44 @@ fi
         CONFIGURE_OPTS+=" --without-perl"
     fi
     
-    echo  "Configuration completed.: $CONFIGURE_OPTS"
+    echo  "Configure options: $CONFIGURE_OPTS"
     ./configure $CONFIGURE_OPTS || {
-        STEP_FAIL  "Configuration completed.initdb failed."
-        echo  "Configuration completed.log:"
+        STEP_FAIL  "Configure step failed."
+        echo  "config.log (tail):"
         tail -20 config.log
         exit 1
     }
     STEP_SUCCESS  "Configuration completed."
     
-    STEP_BEGIN  "Build completed. (using $(nproc) threads)"
-    make -j$(nproc) || STEP_FAIL  "Build completed. failed."
-    STEP_SUCCESS  "Build completed."
+    STEP_BEGIN  "Building (using $(nproc) threads)"
+    make -j$(nproc) || STEP_FAIL  "Build failed."
+    STEP_SUCCESS  "Build completed"
     
-    STEP_BEGIN  "Install files"
-    make install || STEP_FAIL  "Installation failed"
+    STEP_BEGIN  "Installing files"
+    make install || STEP_FAIL  "Installation step failed."
     chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR" || STEP_FAIL  "Set install directory ownership failed."
 }
 
 post_install() {
     CURRENT_STAGE "Post-install Configuration completed."
     
-    STEP_BEGIN  "Prepare data directory"
-    mkdir -p "$DATA_DIR" || STEP_FAIL  "Create data directory $DATA_DIR"
+    STEP_BEGIN  "Preparing data directory"
+    mkdir -p "$DATA_DIR" || STEP_FAIL  "Failed to create data directory: $DATA_DIR"
     
     if [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
-        STEP_BEGIN  "Clear data directory"
+        STEP_BEGIN  "Clearing data directory"
         svc_stop ivorysql 2>/dev/null || true
         rm -rf "${DATA_DIR:?}"/* "${DATA_DIR:?}"/.[^.]* "${DATA_DIR:?}"/..?* 2>/dev/null || true
         STEP_SUCCESS  "Data directory cleared."
     else
-        STEP_SUCCESS  "Data directory is empty (using as-is)."
+        STEP_SUCCESS  "Data directory is empty"
     fi
     
     chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
     chmod 750 "$DATA_DIR"
     STEP_SUCCESS  "Data directory permissions set."
 
-    STEP_BEGIN  "Configuration completed.environment variables"
+    STEP_BEGIN  "Setting environment variables for service user"
     user_home=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
     cat > "$user_home/.bash_profile" <<EOF
 PATH="$INSTALL_DIR/bin:\$PATH"
@@ -850,10 +878,10 @@ EOF
     chown "$SERVICE_USER:$SERVICE_GROUP" "$user_home/.bash_profile"
     chmod 600 "$user_home/.bash_profile"
     
-    su - "$SERVICE_USER" -c "source ~/.bash_profile" || STEP_WARNING  "environment variablesOperation failed (continuing)."
-    STEP_SUCCESS  "environment variables set"
+    su - "$SERVICE_USER" -c "source ~/.bash_profile" || STEP_WARNING  "Failed to load service user profile (continuing)."
+    STEP_SUCCESS  "Environment variables set"
 
-    STEP_BEGIN  ""
+    STEP_BEGIN  "Refreshing package metadata"
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
@@ -864,23 +892,23 @@ EOF
     
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
         STEP_FAIL  "initdb failed."
-        echo  "======= log ======="
+        echo  "======= initdb log (tail) ======="
         tail -n 50 "$INIT_LOG"
-        echo "=========================="
-        echo  ": sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
+        echo "=================================="
+        echo  "Re-run manually: sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
         exit 1
     fi
     
     if grep -q "FATAL" "$INIT_LOG"; then
         STEP_FAIL  "Detected FATAL errors in initdb log."
-        echo  "======= ======="
+        echo  "======= FATAL excerpts ======="
         grep -A 10 "FATAL" "$INIT_LOG"
         exit 1
     fi
     
     STEP_SUCCESS  ""
 
-    STEP_BEGIN  "Configuration completed.systemService readiness check"
+    STEP_BEGIN  "Configuring system service"
     if has_systemd; then
         cat > /etc/systemd/system/ivorysql.service <<EOF
 [Unit]
@@ -910,7 +938,7 @@ EOF
 
         svc_daemon_reload
         svc_enable ivorysql
-        STEP_SUCCESS  "Service readiness check configured. completed."
+        STEP_SUCCESS  "Systemd unit installed"
     else
         STEP_WARNING  "systemd not detected; skipping service unit creation"
         cat > "$INSTALL_DIR/ivorysql-ctl" <<EOF
@@ -930,14 +958,14 @@ EOF
 
 
 verify_installation() {
-    CURRENT_STAGE "InstallValidate"
+    CURRENT_STAGE "Validate installation"
 
-    STEP_BEGIN  "Start Service"
+    STEP_BEGIN  "Starting service"
     svc_start ivorysql || {
-        STEP_FAIL  "Service readiness checkStartinitdb failed."
-        echo  "======= Service ======="
+        STEP_FAIL  "Failed to start service."
+        echo  "======= systemctl status ======="
         svc_status_dump ivorysql
-        echo  "======= log ======="
+        echo  "======= initdb log (tail) ======="
         svc_logs_tail ivorysql
         exit 1
     }
@@ -978,12 +1006,12 @@ verify_installation() {
         return 1
     }
 
-    STEP_BEGIN  "Service readiness check"
+    STEP_BEGIN  "Checking service readiness"
     
     ready=0
     for i in $(seq 1 90); do
         if svc_is_active ivorysql || db_is_ready; then
-            STEP_SUCCESS   "Service readiness checkRunning"
+            STEP_SUCCESS   "Service is ready"
             ready=1
             break
         fi
@@ -991,16 +1019,16 @@ verify_installation() {
     done
 
     if [[ "$ready" -ne 1 ]]; then
-        STEP_FAIL  "Service readiness checkStartTimedOut"
+        STEP_FAIL  "Service readiness check timed out."
         svc_status_dump ivorysql
         svc_logs_tail ivorysql >&2
         exit 1
     fi
 
     # Validateextension
-    STEP_BEGIN  "Validateextension"
+    STEP_BEGIN  "Validating extensions"
     if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -c \"SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'\"" | grep -q ivorysql_ora; then
-        STEP_SUCCESS  "ivorysql_oraextensionSuccessLoad"
+        STEP_SUCCESS  "Extension 'ivorysql_ora' is available"
     else
         if [[ $XML_SUPPORT -eq 0 ]]; then
             STEP_WARNING  "Extension 'ivorysql_ora' not available (XML support missing)."
@@ -1057,22 +1085,22 @@ EOF
 
 main() {
     echo -e "\n\033[36m=========================================\033[0m"
-    echo -e  "\033[36m IvorySQL Install\033[0m"
+    echo -e  "\033[36m IvorySQL Installer\033[0m"
     echo -e "\033[36m=========================================\033[0m"
     echo  "Start: $(date)"
-    echo  "Install: $TIMESTAMP"
-    echo  "Note: includes EL10 system support"
+    echo  "Timestamp: $TIMESTAMP"
+    echo  "Note: EL10 support included"
     
     SECONDS=0
-    check_root          # 1. Checkrootpermission
-    load_config         # 2. LoadConfiguration
-    detect_environment  # 3. Detect
-    setup_user          # 4. Createusergroup
-    init_logging        # 5. log
-    install_dependencies # 6. Installdependencies
-    compile_install     # 7. BuildInstall
-    post_install        # 8. InstallConfiguration
-    verify_installation # 9. ValidateInstall
+    check_root          # 1. Check root permission
+    load_config         # 2. Load configuration
+    detect_environment  # 3. Detect environment
+    setup_user          # 4. Create user & group
+    init_logging        # 5. Initialize logging
+    install_dependencies # 6. Install dependencies
+    compile_install     # 7. Build & install
+    post_install        # 8. Post-install configuration
+    verify_installation # 9. Validate installation
 }
 
 main "$@"
