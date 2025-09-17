@@ -198,6 +198,10 @@ WantedBy=multi-user.target
 3. Enter the directory and add execute permission:
    ```bash
    cd IvorySQL-AutoInstaller
+  
+   ```
+    ```bash
+   
    chmod +x AutoInstall.sh
    ```
 
@@ -502,9 +506,12 @@ WantedBy=multi-user.target
 3. **进入目录并添加执行权限**：
    ```bash
    cd IvorySQL-AutoInstaller
+  
+   ```
+    ```bash
+  
    chmod +x AutoInstall.sh
    ```
-
 ### 3.2 配置修改（可选）
 1. **编辑配置文件**：
    ```bash
