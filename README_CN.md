@@ -7,17 +7,15 @@ IvorySQL-AutoInstall 是一个专业的自动化安装脚本，旨在简化 Ivor
 ### 1.1 核心功能
 - **环境检测与验证**：自动检测操作系统类型和版本，验证系统兼容性。
 - **智能依赖管理**：自动安装编译所需依赖包，支持多平台包管理器。
-- **源码获取与编译**：从指定仓库获取源代码，并行编译以提升速度。
 - **自动化安装配置**：自动设置安装目录、数据目录和日志目录的权限。
 - **服务集成**：自动创建 systemd 服务（或在无 systemd 时创建辅助脚本）并配置环境变量。
 - **全面日志记录**：详细记录安装过程，便于故障排查。
 - **错误处理与回滚**：完善的错误检测与处理机制。
-- **交互/非交互**：`NON_INTERACTIVE=1` 自动接受特定确认（见 §2.6）。
 
 ### 1.2 支持的操作系统
 | 家族 | 发行版/ID | 脚本中的版本门槛 | 说明 |
 |---|---|---|---|
-| RHEL 系 | rhel / centos / almalinux / rocky / fedora / oracle | 明确 **屏蔽 7**；涵盖 8/9/10 的分支 | Oracle Linux 有专项处理 |
+| RHEL 系 | rhel / centos / almalinux / rocky / oracle | 明确 **屏蔽 7**；涵盖 8/9/10 的分支 | Oracle Linux 有专项处理 |
 | Debian/Ubuntu | debian / ubuntu | 版本会被校验；不支持的版本 **快速失败** | 依赖安装使用 `apt` |
 | SUSE 系 | opensuse-leap / sles | openSUSE Leap **15**；SLES **12.5 / 15** | 使用 `zypper` |
 | Arch | arch | 滚动发布 | 使用 `pacman` |
@@ -31,18 +29,14 @@ IvorySQL-AutoInstall 是一个专业的自动化安装脚本，旨在简化 Ivor
 ### 2.1 配置文件详解（`ivorysql.conf`）
 | 配置项 | 是否必需 | 默认值 | 说明 |
 |---|---|---|---|
-| INSTALL_DIR | 是 | /usr/ivorysql| IvorySQL 安装目录（必须为绝对路径） |
-| DATA_DIR | 是 | /var/lib/ivorysql/data| 数据目录（必须为绝对路径） |
-| LOG_DIR | 是 | /var/log/ivorysql| 日志目录（必须为绝对路径） |
-| SERVICE_USER | 是 |ivorysql| 服务用户（不可为保留系统账户） |
-| SERVICE_GROUP | 是 | ivorysql | 服务用户组（不可为保留系统组） |
-| REPO_URL | 是 | https://github.com/IvorySQL/IvorySQL.git | IvorySQL 源码仓库 URL |
-| TAG | 可选 |IvorySQL_4.6 | 指定版本标签（存在时**优先使用**） |
-| BRANCH | 可选 | 无 | 指定源码分支 |
+| INSTALL_DIR | 是 | 无 | IvorySQL 安装目录（必须为绝对路径） |
+| DATA_DIR | 是 | 无 | 数据目录（必须为绝对路径） |
+| LOG_DIR | 是 | 无 | 日志目录（必须为绝对路径） |
+| SERVICE_USER | 是 | 无 | 服务用户（不可为保留系统账户） |
+| SERVICE_GROUP | 是 | 无 | 服务用户组（不可为保留系统组） |
 
 **注意**
 - 所有路径必须为绝对路径，且不得包含空格。
-- 必须设置 **TAG** 或 **BRANCH** 之一；同时设置时以 **TAG 优先**。
 - 用户/组名称不得为系统保留名称（如 `root`、`bin`、`daemon`）。
 
 **示例**
@@ -52,8 +46,6 @@ DATA_DIR=/var/lib/ivorysql/data
 LOG_DIR=/var/log/ivorysql
 SERVICE_USER=ivorysql
 SERVICE_GROUP=ivorysql
-REPO_URL=https://github.com/IvorySQL/IvorySQL.git
-TAG=IvorySQL_4.6
 ```
 
 ### 2.2 依赖管理系统
@@ -74,7 +66,7 @@ TAG=IvorySQL_4.6
 #### 各发行版安装命令
 | 系统 | 命令 |
 |---|---|
-| RHEL 系（CentOS/RHEL/Rocky） | `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
+| CentOS/RHEL/Rocky/AlmaLinux/Oracle | `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
 | Debian/Ubuntu | `apt-get install build-essential libreadline-dev zlib1g-dev libssl-dev` |
 | SUSE/SLES | `zypper install gcc make flex bison readline-devel zlib-devel libopenssl-devel` |
 | Arch Linux | `pacman -S base-devel readline zlib openssl` |
@@ -87,11 +79,6 @@ done
 ```
 
 ### 2.3 编译流程
-
-#### 版本策略
-- **优先**使用 **TAG**；未提供时使用 **BRANCH**。
-- 在成功报告中记录短 **COMMIT_ID**。
-
 #### 配置命令
 ```bash
 ./configure --prefix="$INSTALL_DIR" --with-openssl --with-readline             --without-icu \        # 未检测到 ICU 时
@@ -165,31 +152,39 @@ WantedBy=multi-user.target
 - 安装日志带时间戳与步骤标记
 - 运行期使用 PostgreSQL 内置日志
 
-### 2.6 非交互模式（`NON_INTERACTIVE`）
-- 启动时读取：`NON_INTERACTIVE="${NON_INTERACTIVE:-0}"`。
-- 当 **`NON_INTERACTIVE=1`** 时，安装器**自动接受**：
-  1) 使用**非官方仓库**（当 `REPO_URL` 不在 `github.com/IvorySQL/IvorySQL`）
-  2) 过长的 `TAG` / `BRANCH` 标识（长度 > 100）
-- 该模式**不**跳过校验或错误，仅用于跳过确认交互。
+**运行期日志（PostgreSQL 服务器）**：
+- 在基于 systemd 的发行版上，PostgreSQL **默认写入 journald**。查看命令：
+  ```bash
+  journalctl -u ivorysql -f
+  ```
+- 若需要写入文件，请在 `postgresql.conf` 启用：
+  ```conf
+  logging_collector = on
+  log_directory    = 'log'
+  log_filename     = 'postgresql-%Y-%m-%d_%H%M%S.log'
+  ```
+  然后在 `$DATA_DIR/log/` 查看（如需要，可将该路径软链接到 `LOG_DIR`）。
 
 ---
 
 ## 3. 使用指南
 
 ### 3.1 准备工作
+0. **放置路径（重要）**：
+   - 本脚本**必须位于 IvorySQL 源码仓库中**，推荐路径：
+     ```
+     <repo-root>/IvorySQL-AutoInstaller/
+     ```
+   - 本脚本**直接使用本地源码树进行编译**，**不负责拉取源码**。
 1. **使用 root 权限**：
    ```bash
    su -
    # 或
    sudo -i
    ```
-2. **克隆项目**：
+2. **进入目录添加执行权限**：
    ```bash
-   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
-   ```
-3. **进入目录**：
-   ```bash
-   cd IvorySQL-AutoInstaller
+   cd IvorySQL/IvorySQL-AutoInstaller
    ```
    **添加执行权限**：
    ```bash
@@ -207,23 +202,16 @@ WantedBy=multi-user.target
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
-   REPO_URL=https://github.com/IvorySQL/IvorySQL.git
    LOG_DIR=/var/log/ivorysql
-   TAG=IvorySQL_4.6
-   # BRANCH=
    ```
 
-### 3.3 交互式安装（默认）
+### 3.3 开始安装
 ```bash
-sudo bash AutoInstall.sh -c ivorysql.conf
+sudo bash AutoInstall.sh
 ```
 
-### 3.4 非交互式安装（CI/无人值守）
-```bash
-NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
-```
 
-### 3.5 安装验证（脚本实际输出格式）
+### 3.4 安装验证（脚本实际输出格式）
 ```
 ================ Installation succeeded ================
 
@@ -240,11 +228,11 @@ Useful commands:
 
 Install time: <date>
 Elapsed: <seconds>s
-Build: <TAG or BRANCH>   Commit: <short commit or N/A>
+Build: local-source   Commit: N/A
 OS: <os_type> <os_version>
 ```
 
-### 3.6 服务管理命令
+### 3.5 服务管理命令
 | 功能 | 命令 | 说明 |
 |---|---|---|
 | 启动 | `systemctl start ivorysql` | 启动数据库服务 |
@@ -282,7 +270,7 @@ cat IvorySQL-AutoInstaller/ivorysql.conf
 - 安装日志：`/var/log/ivorysql/install_<timestamp>.log`
 - 错误日志：`/var/log/ivorysql/error_<timestamp>.log`
 - 初始化日志：`/var/log/ivorysql/initdb_<timestamp>.log`
-- 数据库日志：`/var/log/ivorysql/postgresql.log`
+- 数据库日志：`$DATA_DIR/log/postgresql-*.log`（如启用 logging_collector；可将该目录软链接到 LOG_DIR）
 
 ### 4.4 特殊处理
 #### Rocky Linux 10 / Oracle Linux 10
