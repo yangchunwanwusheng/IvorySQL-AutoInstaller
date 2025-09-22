@@ -31,13 +31,13 @@ IvorySQL-AutoInstall 是一个专业的自动化安装脚本，旨在简化 Ivor
 ### 2.1 配置文件详解（`ivorysql.conf`）
 | 配置项 | 是否必需 | 默认值 | 说明 |
 |---|---|---|---|
-| INSTALL_DIR | 是 | 无 | IvorySQL 安装目录（必须为绝对路径） |
-| DATA_DIR | 是 | 无 | 数据目录（必须为绝对路径） |
-| LOG_DIR | 是 | 无 | 日志目录（必须为绝对路径） |
-| SERVICE_USER | 是 | 无 | 服务用户（不可为保留系统账户） |
-| SERVICE_GROUP | 是 | 无 | 服务用户组（不可为保留系统组） |
-| REPO_URL | 是 | 无 | IvorySQL 源码仓库 URL |
-| TAG | 可选 | 无 | 指定版本标签（存在时**优先使用**） |
+| INSTALL_DIR | 是 | /usr/ivorysql| IvorySQL 安装目录（必须为绝对路径） |
+| DATA_DIR | 是 | /var/lib/ivorysql/data| 数据目录（必须为绝对路径） |
+| LOG_DIR | 是 | /var/log/ivorysql| 日志目录（必须为绝对路径） |
+| SERVICE_USER | 是 |ivorysql| 服务用户（不可为保留系统账户） |
+| SERVICE_GROUP | 是 | ivorysql | 服务用户组（不可为保留系统组） |
+| REPO_URL | 是 | https://github.com/IvorySQL/IvorySQL.git | IvorySQL 源码仓库 URL |
+| TAG | 可选 |IvorySQL_4.6 | 指定版本标签（存在时**优先使用**） |
 | BRANCH | 可选 | 无 | 指定源码分支 |
 
 **注意**
@@ -301,4 +301,5 @@ PERL_MM_USE_DEFAULT=1 cpan -i IPC::Run FindBin
 perl -MFindBin -e 1
 perl -MIPC::Run -e 1
 ```
+
 
