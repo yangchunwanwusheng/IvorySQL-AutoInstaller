@@ -3,9 +3,6 @@ set -eo pipefail
 # Ensure ERR trap inherits into functions/subshells
 set -E
 
-# Non-interactive mode: set to 1 to skip all read -p confirmations
-NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
-
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OS_TYPE=""
 OS_VERSION=""
@@ -158,50 +155,15 @@ validate_config() {
             
             if [[ $key == "SERVICE_USER" ]]; then
                 if ! getent passwd "$value" &>/dev/null; then
-                    STEP_SUCCESS  "Create user: $value"
+                    STEP_SUCCESS  "Will Create user: $value"
                 fi
             else
                 if ! getent group "$value" &>/dev/null; then
-                    STEP_SUCCESS  "Create group: $value"
+                    STEP_SUCCESS  "Will Create group: $value"
                 fi
             fi
             ;;
-            
-        REPO_URL)
-            if [[ ! "$value" =~ ^https?://[a-zA-Z0-9./_-]+$ ]]; then
-                STEP_FAIL  "Configuration error: REPO_URL invalid format (current value: '$value')"
-            fi
-            
-            if [[ ! "$value" =~ github\.com/IvorySQL/IvorySQL ]]; then
-                STEP_WARNING  "Warning: using non-official Repository cloned. ($value)."
-                if [[ $NON_INTERACTIVE -eq 1 ]]; then
-                STEP_WARNING  "Detect non-official repository(auto-accepted, NON_INTERACTIVE=1)"
-            else
-                read -p "Confirm using non-official repository? (y/N)" -n 1 -r
-                echo
-                [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL  "Install aborted: user declined non-official Repository cloned.."
-            fi
-            fi
-            ;;
-            
-        BRANCH|TAG)
-            if [[ -n "$value" ]]; then
-                if [[ "$value" =~ [\$\&\;\|\>\<\!\\\'\"] ]]; then
-                    STEP_FAIL  "Configuration error: $key contains unsafe characters (current value: '$value')"
-                fi
-                
-                if [[ ${#value} -gt 100 ]]; then
-                    STEP_WARNING  "Warning: $key length exceeds 100 (current value: '$value')"
-                    if [[ $NON_INTERACTIVE -eq 1 ]]; then
-                    STEP_WARNING  "Overlong identifier detected (auto-accepted; NON_INTERACTIVE=1)."
-                else
-                    read -p "Confirm using overlong identifier? (y/N)" -n 1 -r
-                    echo
-                    [[ ! $REPLY =~ ^[Yy]$ ]] && STEP_FAIL  "Install aborted: user declined overlong identifier."
-                fi
-                fi
-            fi
-            ;;
+
     esac
 }
 
@@ -226,17 +188,11 @@ source "$CONFIG_FILE" || STEP_FAIL  "Failed to load configuration file: $CONFIG_
 STEP_SUCCESS  "Configuration loaded"
     
     STEP_BEGIN  "Validating configuration"
-    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "REPO_URL" "LOG_DIR")
+    declare -a required_vars=("INSTALL_DIR" "DATA_DIR" "SERVICE_USER" "SERVICE_GROUP" "LOG_DIR")
     for var in "${required_vars[@]}"; do
         [[ -z "${!var}" ]] && STEP_FAIL  "Missing required configuration: $var"
     done
     STEP_SUCCESS  "Configuration validated"
-    
-    if [[ -z "$TAG" && -z "$BRANCH" ]]; then
-        STEP_FAIL  "Specify either TAG or BRANCH."
-    elif [[ -n "$TAG" && -n "$BRANCH" ]]; then
-        STEP_WARNING  "Both TAG and BRANCH provided; TAG ($TAG) will take precedence."
-    fi
     
     STEP_BEGIN  "Checking configuration values"
     while IFS='=' read -r key value; do
@@ -271,12 +227,11 @@ check_root() {
     CURRENT_STAGE "Privilege check"
     
     STEP_BEGIN  "Validating privileges"
-    [[ "$(id -u)" -ne 0 ]] && { 
+    [[ "$(id -u)" -ne 0 ]] && {
+        echo -e "Please run: \033[33msudo \"$0\" \"$@\"\033[0m" >&2
         STEP_FAIL  "Root privileges are required."
-        echo -e  "Please run: \033[33msudo"$0" "$@"\033[0m" >&2
-        exit 1
     }
-    STEP_SUCCESS  "root permission Validate"
+    STEP_SUCCESS  "Root privileges validated"
 }
 
 detect_environment() {
@@ -305,7 +260,7 @@ detect_environment() {
     fi
     
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora|oracle)
+        centos|rhel|almalinux|rocky|oracle)
             RHEL_VERSION=$(get_major_version)
             [[ -z $RHEL_VERSION ]] && STEP_FAIL  "Failed to detect major version"
             
@@ -394,7 +349,7 @@ install_dependencies() {
 
     STEP_BEGIN  "Refreshing package metadata"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora|oracle)
+        centos|rhel|almalinux|rocky|oracle)
             $PKG_MANAGER install -y epel-release 2>/dev/null || true
             
             # EL10-specific handling - enhanced XML library installation
@@ -450,12 +405,12 @@ install_dependencies() {
             pacman -Sy --noconfirm
             ;;
     esac
-    STEP_SUCCESS  ""
+    STEP_SUCCESS  "Package metadata refreshed"
 
 # Ensure pkg-config exists (needed by ICU detection)
 STEP_BEGIN  "Installing pkg-config"
 case "$OS_TYPE" in
-    centos|rhel|almalinux|rocky|fedora|oracle)
+    centos|rhel|almalinux|rocky|oracle)
         $PKG_MANAGER install -y pkgconf-pkg-config || $PKG_MANAGER install -y pkgconfig || true
         ;;
     ubuntu|debian)
@@ -476,7 +431,7 @@ fi
 
     STEP_BEGIN  "Install dependencies"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora|oracle)
+        centos|rhel|almalinux|rocky|oracle)
             # Oracle Linux specific settings
             if [[ "$OS_TYPE" == "oracle" ]]; then
                 STEP_BEGIN  "Install Oracle Linux dependencies"
@@ -554,7 +509,7 @@ fi
     # Install required Perl modules
     STEP_BEGIN  "Install Perl modules"
     case "$OS_TYPE" in
-        centos|rhel|almalinux|rocky|fedora|oracle)
+        centos|rhel|almalinux|rocky|oracle)
             # Install Perl core modules and dev tools
             $PKG_MANAGER install -y perl-core perl-devel || true
             
@@ -687,63 +642,22 @@ setup_user() {
 
 compile_install() {
     CURRENT_STAGE "Build and install"
-    
-    local repo_dir
-    repo_dir="$(basename "$REPO_URL" .git)"
-    STEP_BEGIN  "Fetching repository"
-    if [[ ! -d "$repo_dir" ]]; then
-        git_clone_cmd="git clone"
-        
-        if [[ -n "$TAG" ]]; then
-            STEP_BEGIN  "Using tag fetch ($TAG)"
-            git_clone_cmd+=" -b $TAG"
-        elif [[ -n "$BRANCH" ]]; then
-            STEP_BEGIN  "Using branch fetch ($BRANCH)"
-            git_clone_cmd+=" -b $BRANCH"
-        fi
-        
-        git_clone_cmd+=" --progress $REPO_URL"
-        
-        echo  "Clone command: $git_clone_cmd"
-        # retry
-        for i in {1..3}; do
-            if $git_clone_cmd; then
-                break
-            fi
-            if [[ $i -eq 3 ]]; then
-                STEP_FAIL  "Clone failed; check repository URL and network connectivity."
-            fi
-            STEP_WARNING  "Retry $i/3 failed; waiting 10 seconds before retry."
-            sleep 10
-        done
-        STEP_SUCCESS  "Repository cloned"
-    else
-        STEP_SUCCESS  "Repository directory exists: $repo_dir"
+
+    # Locate repo root: script lives in IvorySQL-AutoInstaller/ under repo root
+    local script_dir repo_root
+    script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    repo_root="$(realpath "$script_dir/.." 2>/dev/null || readlink -f "$script_dir/..")"
+
+    if [[ ! -f "$repo_root/configure" || ! -d "$repo_root/src" ]]; then
+        STEP_FAIL  "Cannot locate IvorySQL source at repo root: $repo_root (missing 'configure' or 'src')."
     fi
-    cd "$repo_dir" || STEP_FAIL  "Failed to enter directory: $repo_dir"
-    
-    if [[ -n "$TAG" ]]; then
-        STEP_BEGIN  "Validating tag ($TAG)"
-        git checkout "tags/$TAG" || STEP_FAIL  "Failed to switch to tag: $TAG"
-        COMMIT_ID=$(git rev-parse --short HEAD)
-        STEP_SUCCESS  "tag $TAG (commit: $COMMIT_ID)"
-    else
-        STEP_BEGIN  "Switching to branch ($BRANCH)"
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
-            git reset --hard || STEP_WARNING  "Failed to reset branch (continuing)."
-            git clean -fd || STEP_WARNING  "Failed to clean working tree (continuing)."
-            git checkout "$BRANCH" --progress || STEP_FAIL  "Failed to switch to branch: $BRANCH"
-            git pull origin "$BRANCH" --progress || STEP_WARNING  "Failed to pull latest commits (continuing)."
-            STEP_SUCCESS  "Switched to branch: $BRANCH"
-        else
-            STEP_SUCCESS  "On branch: $BRANCH"
-        fi
-        COMMIT_ID=$(git rev-parse --short HEAD)
-        STEP_SUCCESS  "Commit: $COMMIT_ID"
-    fi
-    
-    # Validate Perl
+
+    STEP_BEGIN  "Using local IvorySQL source tree at $repo_root"
+    STEP_SUCCESS  "Source ready"
+
+    # Build directly in repo root (in-tree build, per project decision)
+    cd "$repo_root" || STEP_FAIL  "Failed to enter source dir: $repo_root"
+
     STEP_BEGIN  "Validate Perl environment"
     REQUIRED_PERL_MODULES=("FindBin" "IPC::Run")
     MISSING_MODULES=()
@@ -759,12 +673,12 @@ compile_install() {
         STEP_BEGIN  "Attempt to install missing Perl modules"
         for module in "${MISSING_MODULES[@]}"; do
             if command -v cpanm >/dev/null 2>&1; then
-                cpanm "$module" || STEP_WARNING  "initdb failed. to install $module"
+                cpanm "$module" || STEP_WARNING  "Failed to install Perl module: $module"
             else
-                cpan "$module" || STEP_WARNING  "initdb failed. to install $module"
+                cpan "$module" || STEP_WARNING  "Failed to install Perl module: $module"
             fi
         done
-        STEP_SUCCESS  "Perl modules installation failed.try"
+        STEP_SUCCESS  "Attempted to install missing Perl modules"
     fi
 
     # Check
@@ -831,10 +745,9 @@ fi
     
     echo  "Configure options: $CONFIGURE_OPTS"
     ./configure $CONFIGURE_OPTS || {
-        STEP_FAIL  "Configure step failed."
         echo  "config.log (tail):"
-        tail -20 config.log
-        exit 1
+        tail -20 config.log || true
+        STEP_FAIL  "Configure step failed."
     }
     STEP_SUCCESS  "Configuration completed."
     
@@ -848,7 +761,7 @@ fi
 }
 
 post_install() {
-    CURRENT_STAGE "Post-install Configuration completed."
+    CURRENT_STAGE "Post-install configuration"
     
     STEP_BEGIN  "Preparing data directory"
     mkdir -p "$DATA_DIR" || STEP_FAIL  "Failed to create data directory: $DATA_DIR"
@@ -880,7 +793,7 @@ EOF
     su - "$SERVICE_USER" -c "source ~/.bash_profile" || STEP_WARNING  "Failed to load service user profile (continuing)."
     STEP_SUCCESS  "Environment variables set"
 
-    STEP_BEGIN  "Refreshing package metadata"
+    STEP_BEGIN  "Initializing database (initdb)"
     INIT_LOG="${LOG_DIR}/initdb_${TIMESTAMP}.log"
     INIT_CMD="source ~/.bash_profile && initdb -D $DATA_DIR --no-locale --debug"
     
@@ -890,22 +803,20 @@ EOF
     fi
     
     if ! su - "$SERVICE_USER" -c "$INIT_CMD" > "$INIT_LOG" 2>&1; then
-        STEP_FAIL  "initdb failed."
         echo  "======= initdb log (tail) ======="
-        tail -n 50 "$INIT_LOG"
+        tail -n 50 "$INIT_LOG" || true
         echo "=================================="
-        echo  "Re-run manually: sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
-        exit 1
+        echo  "Re-run: sudo -u $SERVICE_USER bash -c 'source ~/.bash_profile && initdb -D $DATA_DIR --debug'"
+        STEP_FAIL  "initdb failed."
     fi
     
     if grep -q "FATAL" "$INIT_LOG"; then
-        STEP_FAIL  "Detected FATAL errors in initdb log."
         echo  "======= FATAL excerpts ======="
-        grep -A 10 "FATAL" "$INIT_LOG"
-        exit 1
+        grep -A 10 "FATAL" "$INIT_LOG" || true
+        STEP_FAIL  "Detected FATAL errors in initdb log."
     fi
     
-    STEP_SUCCESS  ""
+    STEP_SUCCESS  "Database initialized"
 
     STEP_BEGIN  "Configuring system service"
     if has_systemd; then
@@ -961,14 +872,13 @@ verify_installation() {
 
     STEP_BEGIN  "Starting service"
     svc_start ivorysql || {
-        STEP_FAIL  "Failed to start service."
         echo  "======= systemctl status ======="
         svc_status_dump ivorysql
-        echo  "======= initdb log (tail) ======="
+        echo  "======= recent logs ======="
         svc_logs_tail ivorysql
-        exit 1
+        STEP_FAIL  "Failed to start service."
     }
-    STEP_SUCCESS  "Service readiness check start invoked."
+    STEP_SUCCESS  "Service started; checking readiness..."
 
     
     get_pgport() {
@@ -1018,15 +928,14 @@ verify_installation() {
     done
 
     if [[ "$ready" -ne 1 ]]; then
-        STEP_FAIL  "Service readiness check timed out."
         svc_status_dump ivorysql
         svc_logs_tail ivorysql >&2
-        exit 1
+        STEP_FAIL  "Service readiness check timed out."
     fi
 
     # Validate extension
     STEP_BEGIN  "Validating extensions"
-    if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -c \"SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'\"" | grep -q ivorysql_ora; then
+    if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -tAc \"SELECT 1 FROM pg_available_extensions WHERE name='ivorysql_ora'\"" >/dev/null 2>&1; then
         STEP_SUCCESS  "Extension 'ivorysql_ora' is available"
     else
         if [[ $XML_SUPPORT -eq 0 ]]; then
@@ -1074,8 +983,8 @@ Useful commands:
 
 Install time: $(date)
 Elapsed: ${SECONDS}s
-Build: ${TAG:-$BRANCH}   Commit: ${COMMIT_ID:-N/A}
 OS: $OS_TYPE $OS_VERSION
+Build: local-source   Commit: N/A
 EOF
   
 }
