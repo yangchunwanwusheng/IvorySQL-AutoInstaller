@@ -33,13 +33,13 @@ IvorySQL-AutoInstall is a professional automated installation script designed to
 ### 2.1 Configuration File Explained (`ivorysql.conf`)
 | Key           | Required | Default | Description                                                  |
 |---------------|----------|---------|--------------------------------------------------------------|
-| INSTALL_DIR   | Yes      | None    | Install directory for IvorySQL (absolute path required)      |
-| DATA_DIR      | Yes      | None    | Database data directory (absolute path required)             |
-| LOG_DIR       | Yes      | None    | Log directory (absolute path required)                       |
-| SERVICE_USER  | Yes      | None    | Service user (must not be a reserved system account)         |
-| SERVICE_GROUP | Yes      | None    | Service group (must not be a reserved system group)          |
-| REPO_URL      | Yes      | None    | IvorySQL source repository URL                                |
-| TAG           | Optional | None    | Specific release tag to install (**preferred when present**) |
+| INSTALL_DIR   | Yes      | /usr/ivorysql  | Install directory for IvorySQL (absolute path required)      |
+| DATA_DIR      | Yes      |/var/lib/ivorysql/data  | Database data directory (absolute path required)             |
+| LOG_DIR       | Yes      | /var/log/ivorysql | Log directory (absolute path required)                       |
+| SERVICE_USER  | Yes      | ivorysql  | Service user (must not be a reserved system account)         |
+| SERVICE_GROUP | Yes      | ivorysql  | Service group (must not be a reserved system group)          |
+| REPO_URL      | Yes      | https://github.com/IvorySQL/IvorySQL.git| IvorySQL source repository URL                                |
+| TAG           | Optional | IvorySQL_4.6  | Specific release tag to install (**preferred when present**) |
 | BRANCH        | Optional | None    | Source branch to install                                     |
 
 **Notes**
