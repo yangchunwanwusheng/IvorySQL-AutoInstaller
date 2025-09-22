@@ -333,7 +333,7 @@ detect_environment() {
                     [[ $MAJOR_VERSION =~ ^(18|20|22|24)$ ]] || 
                     STEP_FAIL  "Unsupported Ubuntu version: $OS_VERSION" ;;
                 debian)
-                    [[ $MAJOR_VERSION =~ ^(10|11|12)$ ]] || 
+                    [[ $MAJOR_VERSION =~ ^(10|11|12|13)$ ]] || 
                     STEP_FAIL  "Unsupported Debian version: $OS_VERSION" ;;
             esac
             
@@ -540,7 +540,7 @@ fi
         arch)
             # Force install readline
             STEP_BEGIN  "Installing readline"
-            pacman -S --noconfirm readline || STEP_FAIL  "readlineInstallation failed, mustInstallreadline"
+            pacman -S --noconfirm readline || STEP_FAIL  "readline installation failed, must install readline"
             STEP_SUCCESS  "Readline installation succeeded"
             
             pacman -S --noconfirm \
@@ -608,7 +608,6 @@ fi
         STEP_WARNING  "XML development headers not found; consider installing libxml2-devel/libxml2-dev."
     fi
     
-    # ensureLibXML2development library - Rocky Linux 10
     if [[ $XML_SUPPORT -eq 0 ]]; then
         STEP_BEGIN  "Attempting to install libxml2 development headers"
         case "$OS_TYPE" in
@@ -616,22 +615,22 @@ fi
                 # Rocky Linux 10, UsingInstall
                 if [[ "$OS_TYPE" == "rocky" && $RHEL_VERSION -eq 10 ]]; then
                     STEP_BEGIN  "Rocky Linux 10: trying multiple methods to install libxml2-devel"
-                    # 1: tryenableCRBrepositoryInstall
+                    # 1: try enable CRB repository install
                     $PKG_MANAGER config-manager --set-enabled crb 2>/dev/null || true
                     if $PKG_MANAGER install -y libxml2-devel; then
                         XML_SUPPORT=1
                         STEP_SUCCESS  "Installed libxml2-devel via CRB repository"
                     else
-                        # 2: tryenableDevelrepository
+                        # 2: try enable devel repository install
                         $PKG_MANAGER config-manager --set-enabled devel 2>/dev/null || true
                         if $PKG_MANAGER install -y libxml2-devel; then
                             XML_SUPPORT=1
                             STEP_SUCCESS  "Installed libxml2-devel via devel repository"
                         else
-                            # 3: tryUsingdnf--allowerasing
+                            # 3: try using dnf --allowerasing
                             if $PKG_MANAGER install -y --allowerasing libxml2-devel; then
                                 XML_SUPPORT=1
-                                STEP_SUCCESS  "Installed libxml2-devel with --allowerasing."
+                                STEP_SUCCESS  "Installed libxml2-devel with --allowerasing"
                             else
                                 XML_SUPPORT=0
                                 STEP_WARNING  "Failed to install libxml2-devel"
@@ -696,10 +695,10 @@ compile_install() {
         git_clone_cmd="git clone"
         
         if [[ -n "$TAG" ]]; then
-            STEP_BEGIN  "UsingtagFetch ($TAG)"
+            STEP_BEGIN  "Using tag fetch ($TAG)"
             git_clone_cmd+=" -b $TAG"
         elif [[ -n "$BRANCH" ]]; then
-            STEP_BEGIN  "UsingbranchFetch ($BRANCH)"
+            STEP_BEGIN  "Using branch fetch ($BRANCH)"
             git_clone_cmd+=" -b $BRANCH"
         fi
         
@@ -777,7 +776,7 @@ compile_install() {
     STEP_SUCCESS  "Perl environment validated"
     
     STEP_BEGIN  "Configuring build options"
-    # Configuration - enablereadline(ensureInstall)
+    # Configuration - enable readline(ensure installation)
     CONFIGURE_OPTS="--prefix=$INSTALL_DIR --with-openssl --with-readline"
     STEP_SUCCESS  "Readline support enabled"
 
@@ -794,7 +793,7 @@ else
     fi
 fi
 
-# XMLsupportConfiguration
+# XML support Configuration
 
     if [[ $XML_SUPPORT -eq 1 ]]; then
         CONFIGURE_OPTS+=" --with-libxml"
@@ -804,7 +803,7 @@ fi
         STEP_WARNING  "libxml2 development files not found; XML support disabled."
     fi
     
-    # DetectTCL
+    # Detect TCL
     tcl_paths=("/usr/include/tcl.h" "/usr/include/tcl8.6/tcl.h")
     if [[ -f "${tcl_paths[0]}" || -f "${tcl_paths[1]}" ]]; then
         CONFIGURE_OPTS+=" --with-tcl"
@@ -814,7 +813,7 @@ fi
         STEP_WARNING  "Tcl development headers not found; Tcl support disabled."
     fi
     
-    # DetectPerl
+    # Detect Perl
     perl_paths=("/usr/bin/perl" "/usr/local/bin/perl")
     if command -v perl >/dev/null; then
         perl_header=$(find /usr -name perl.h 2>/dev/null | head -n1)
@@ -1025,7 +1024,7 @@ verify_installation() {
         exit 1
     fi
 
-    # Validateextension
+    # Validate extension
     STEP_BEGIN  "Validating extensions"
     if su - "$SERVICE_USER" -c "$INSTALL_DIR/bin/psql -d postgres -c \"SELECT * FROM pg_available_extensions WHERE name = 'ivorysql_ora'\"" | grep -q ivorysql_ora; then
         STEP_SUCCESS  "Extension 'ivorysql_ora' is available"
@@ -1078,7 +1077,7 @@ Elapsed: ${SECONDS}s
 Build: ${TAG:-$BRANCH}   Commit: ${COMMIT_ID:-N/A}
 OS: $OS_TYPE $OS_VERSION
 EOF
-
+  
 }
 
 
