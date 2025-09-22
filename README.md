@@ -1,5 +1,5 @@
-English | [中文](README_CN.md)
-# IvorySQL-AutoInstall — User Guide (Aligned Bilingual, Architecture Section Removed)
+English | [中文](README_cn.md)
+# IvorySQL-AutoInstall — User Guide 
 
 
 ## 1. Project Introduction
@@ -9,17 +9,14 @@ IvorySQL-AutoInstall is a professional automated installation script designed to
 ### 1.1 Core Features
 - **Environment detection and validation**: Automatically detect the operating system type and version, and validate compatibility.
 - **Intelligent dependency management**: Automatically install build-time dependencies, supporting multiple platform package managers.
-- **Source retrieval and compilation**: Fetch source code from a specified repository and accelerate builds with parallel compilation.
 - **Automated installation and configuration**: Automatically set permissions for the install directory, data directory, and log directory.
 - **Service integration**: Automatically create a systemd service (or a helper when systemd is absent) and configure environment variables.
 - **Comprehensive logging**: Record detailed installation steps to facilitate troubleshooting.
 - **Error handling and rollback**: Robust error detection and handling mechanisms.
-- **Interactive and non-interactive**: `NON_INTERACTIVE=1` auto-accepts specific confirmations (see §2.6).
-
 ### 1.2 Supported Operating Systems
 | Family        | Distribution/ID                                     | Version Gate in Script                                  | Notes                        |
 |---------------|------------------------------------------------------|---------------------------------------------------------|------------------------------|
-| RHEL Family   | rhel / centos / almalinux / rocky / fedora / oracle | Explicitly **blocks 7**; code paths cover 8/9/10        | Oracle Linux has specifics   |
+| RHEL Family   | rhel / centos / almalinux / rocky / oracle | Explicitly **blocks 7**; code paths cover 8/9/10        | Oracle Linux has specifics   |
 | Debian/Ubuntu | debian / ubuntu                                     | Version validated; unsupported versions **fail fast**   | Uses `apt` for dependencies  |
 | SUSE Family   | opensuse-leap / sles                                 | openSUSE Leap **15**; SLES **12.5 / 15**                | Uses `zypper`                |
 | Arch          | arch                                                 | Rolling release                                         | Uses `pacman`                |
@@ -33,18 +30,14 @@ IvorySQL-AutoInstall is a professional automated installation script designed to
 ### 2.1 Configuration File Explained (`ivorysql.conf`)
 | Key           | Required | Default | Description                                                  |
 |---------------|----------|---------|--------------------------------------------------------------|
-| INSTALL_DIR   | Yes      | /usr/ivorysql  | Install directory for IvorySQL (absolute path required)      |
-| DATA_DIR      | Yes      |/var/lib/ivorysql/data  | Database data directory (absolute path required)             |
-| LOG_DIR       | Yes      | /var/log/ivorysql | Log directory (absolute path required)                       |
-| SERVICE_USER  | Yes      | ivorysql  | Service user (must not be a reserved system account)         |
-| SERVICE_GROUP | Yes      | ivorysql  | Service group (must not be a reserved system group)          |
-| REPO_URL      | Yes      | https://github.com/IvorySQL/IvorySQL.git| IvorySQL source repository URL                                |
-| TAG           | Optional | IvorySQL_4.6  | Specific release tag to install (**preferred when present**) |
-| BRANCH        | Optional | None    | Source branch to install                                     |
+| INSTALL_DIR   | Yes      | None    | Install directory for IvorySQL (absolute path required)      |
+| DATA_DIR      | Yes      | None    | Database data directory (absolute path required)             |
+| LOG_DIR       | Yes      | None    | Log directory (absolute path required)                       |
+| SERVICE_USER  | Yes      | None    | Service user (must not be a reserved system account)         |
+| SERVICE_GROUP | Yes      | None    | Service group (must not be a reserved system group)          |
 
 **Notes**
 - Paths must be absolute and contain no spaces.
-- Provide either **TAG** or **BRANCH**; when both are set, **TAG takes precedence**.
 - User/group names must not be reserved names (e.g., `root`, `bin`, `daemon`).
 
 **Example**
@@ -54,8 +47,6 @@ DATA_DIR=/var/lib/ivorysql/data
 LOG_DIR=/var/log/ivorysql
 SERVICE_USER=ivorysql
 SERVICE_GROUP=ivorysql
-REPO_URL=https://github.com/IvorySQL/IvorySQL.git
-TAG=IvorySQL_4.6
 ```
 
 ### 2.2 Dependency Management System
@@ -76,7 +67,7 @@ TAG=IvorySQL_4.6
 #### OS-Specific Install Commands
 | OS                          | Commands                                                                 |
 |-----------------------------|--------------------------------------------------------------------------|
-| RHEL Family (CentOS/RHEL/Rocky) | `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
+| CentOS/RHEL/Rocky/AlmaLinux/Oracle| `dnf group install "Development Tools"` <br> `dnf install readline-devel zlib-devel openssl-devel` |
 | Debian/Ubuntu               | `apt-get install build-essential libreadline-dev zlib1g-dev libssl-dev` |
 | SUSE/SLES                   | `zypper install gcc make flex bison readline-devel zlib-devel libopenssl-devel` |
 | Arch Linux                  | `pacman -S base-devel readline zlib openssl`                             |
@@ -89,11 +80,6 @@ done
 ```
 
 ### 2.3 Build Process
-
-#### Versioning
-- Prefer **TAG**. If TAG is not provided, use **BRANCH**.
-- Record the short **COMMIT_ID** for the success report.
-
 #### Configure
 ```bash
 ./configure --prefix="$INSTALL_DIR" --with-openssl --with-readline             --without-icu \        # when ICU is not detected
@@ -168,33 +154,42 @@ WantedBy=multi-user.target
 - Timestamped, step-tagged installer logs
 - PostgreSQL built-in runtime logging
 
-### 2.6 Non-Interactive Mode (`NON_INTERACTIVE`)
-- Read at startup: `NON_INTERACTIVE="${NON_INTERACTIVE:-0}"`.
-- When **`NON_INTERACTIVE=1`**, the installer **auto-accepts**:
-  1) Using a **non-official** repository (when `REPO_URL` is not under `github.com/IvorySQL/IvorySQL`)
-  2) Overlong `TAG` / `BRANCH` identifiers (length > 100)
-- This mode does **not** skip validations or errors—only confirmations.
+**Runtime logging (PostgreSQL server)**:
+- On systemd-based distros, PostgreSQL **defaults to journald**. View logs via:
+  ```bash
+  journalctl -u ivorysql -f
+  ```
+- To write logs to files, enable in `postgresql.conf`:
+  ```conf
+  logging_collector = on
+  log_directory    = 'log'
+  log_filename     = 'postgresql-%Y-%m-%d_%H%M%S.log'
+  ```
+  Then review `$DATA_DIR/log/` (you may symlink this path into `LOG_DIR` if desired).
 
 ---
 
 ## 3. User Guide
 
 ### 3.1 Preparation
+0. **Placement** (important):
+   - This script **must reside inside the IvorySQL source repository**, typically at:
+     ```
+     <repo-root>/IvorySQL-AutoInstaller/
+     ```
+   - It **builds from the local source tree** already present on disk. The script **does not clone** sources.
 1. Switch to root:
    ```bash
    su -
    # or
    sudo -i
    ```
-2. Clone the project:
+
+2. Enter the directory and add execute permission:
    ```bash
-   git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
+   cd IvorySQL/IvorySQL-AutoInstaller
    ```
-3. Enter the directory :
-   ```bash
-   cd IvorySQL-AutoInstaller
-   ```
-   add execute permission:
+   Add execute permission:
    ```bash
    chmod +x AutoInstall.sh
    ```
@@ -210,23 +205,16 @@ WantedBy=multi-user.target
    DATA_DIR=/var/lib/ivorysql/data
    SERVICE_USER=ivorysql
    SERVICE_GROUP=ivorysql
-   REPO_URL=https://github.com/IvorySQL/IvorySQL.git
    LOG_DIR=/var/log/ivorysql
-   TAG=IvorySQL_4.6
-   # BRANCH=
    ```
 
-### 3.3 Interactive Installation (default)
+### 3.3 Start Installation
 ```bash
-sudo bash AutoInstall.sh -c ivorysql.conf
+sudo bash AutoInstall.sh
 ```
 
-### 3.4 Non-Interactive Installation (CI/unattended)
-```bash
-NON_INTERACTIVE=1 sudo bash AutoInstall.sh -c ivorysql.conf
-```
 
-### 3.5 Installation Verification 
+### 3.4 Installation Verification (exact format from the script)
 ```
 ================ Installation succeeded ================
 
@@ -243,11 +231,11 @@ Useful commands:
 
 Install time: <date>
 Elapsed: <seconds>s
-Build: <TAG or BRANCH>   Commit: <short commit or N/A>
+Build: local-source   Commit: N/A
 OS: <os_type> <os_version>
 ```
 
-### 3.6 Service Management Commands
+### 3.5 Service Management Commands
 | Action | Command | Notes |
 |---|---|---|
 | Start | `systemctl start ivorysql` | Start the database service |
@@ -285,7 +273,7 @@ cat IvorySQL-AutoInstaller/ivorysql.conf
 - Install logs: `/var/log/ivorysql/install_<timestamp>.log`
 - Error logs: `/var/log/ivorysql/error_<timestamp>.log`
 - initdb logs: `/var/log/ivorysql/initdb_<timestamp>.log`
-- DB logs: `/var/log/ivorysql/postgresql.log`
+- DB logs: `$DATA_DIR/log/postgresql-*.log` (if logging_collector is enabled; you may symlink this directory into `LOG_DIR`)
 
 ### 4.4 Special Handling
 #### Rocky Linux 10 / Oracle Linux 10
