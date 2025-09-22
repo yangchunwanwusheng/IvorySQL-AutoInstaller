@@ -53,7 +53,7 @@ LOG_DIR=/var/log/ivorysql
 SERVICE_USER=ivorysql
 SERVICE_GROUP=ivorysql
 REPO_URL=https://github.com/IvorySQL/IvorySQL.git
-TAG=IvorySQL_4.5.3
+TAG=IvorySQL_4.6
 ```
 
 ### 2.2 依赖管理系统
@@ -187,9 +187,12 @@ WantedBy=multi-user.target
    ```bash
    git clone https://github.com/yangchunwanwusheng/IvorySQL-AutoInstaller.git
    ```
-3. **进入目录并添加执行权限**：
+3. **进入目录**：
    ```bash
    cd IvorySQL-AutoInstaller
+   ```
+   **添加执行权限**：
+   ```bash
    chmod +x AutoInstall.sh
    ```
 
@@ -206,7 +209,7 @@ WantedBy=multi-user.target
    SERVICE_GROUP=ivorysql
    REPO_URL=https://github.com/IvorySQL/IvorySQL.git
    LOG_DIR=/var/log/ivorysql
-   TAG=IvorySQL_4.5.3
+   TAG=IvorySQL_4.6
    # BRANCH=
    ```
 
@@ -298,3 +301,4 @@ PERL_MM_USE_DEFAULT=1 cpan -i IPC::Run FindBin
 perl -MFindBin -e 1
 perl -MIPC::Run -e 1
 ```
+
